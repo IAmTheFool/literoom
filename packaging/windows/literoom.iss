@@ -33,6 +33,11 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; ONNX builds only: onnxruntime*.dll, the Visual C++ runtime DLLs it needs, and
+; the MobileSAM models (the app looks in <exe folder>\models). Both lines are
+; skipped when the folder has no such files, so non-ONNX builds still work.
+Source: "{#SourceDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceDir}\models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"

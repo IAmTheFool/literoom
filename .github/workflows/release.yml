@@ -7,6 +7,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # ONNX Runtime release bundled with the app. Match the version you develop
+  # against; bump it here and nowhere else.
+  ORT_VERSION: "1.31.1"
+
 jobs:
   package:
     name: package ${{ matrix.os }}
@@ -19,6 +24,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Harmless if you don't use Git LFS. If the .onnx models are stored
+          # in LFS this downloads the real files instead of tiny pointer files.
+          lfs: true
+
+      # Fail early, with a clear message, if the models aren't really there.
+      - name: Check MobileSAM models
+        shell: bash
+        run: |
+          for f in models/mobile_sam.encoder.onnx models/mobile_sam.decoder.onnx; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is missing from the repository"; exit 1
+            fi
+            size=$(wc -c < "$f")
+            if [ "$size" -lt 1000000 ]; then
+              echo "::error::$f is only $size bytes - probably a Git LFS pointer, not the model"; exit 1
+            fi
+          done
 
       - name: Set up MSVC (Windows)
         if: runner.os == 'Windows'
@@ -36,10 +59,34 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
 
-      - name: Configure and build
+      # ---- ONNX Runtime: download the official CPU build ----
+      # Both steps export ONNXRUNTIME_DIR (the folder that contains include/
+      # and lib/) for the configure step below.
+      - name: Download ONNX Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          cmake --preset ${{ matrix.preset }}
-          cmake --build --preset ${{ matrix.preset }}
+          $v = $env:ORT_VERSION
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$v/onnxruntime-win-x64-$v.zip" -OutFile ort.zip
+          Expand-Archive ort.zip -DestinationPath ort
+          $dir = (Resolve-Path "ort/onnxruntime-win-x64-$v").Path -replace '\\', '/'
+          Add-Content -Path $env:GITHUB_ENV -Value "ONNXRUNTIME_DIR=$dir"
+
+      - name: Download ONNX Runtime (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          mkdir ort
+          tar -xzf ort.tgz -C ort
+          echo "ONNXRUNTIME_DIR=$PWD/ort/onnxruntime-linux-x64-${ORT_VERSION}" >> "$GITHUB_ENV"
+
+      # -D on the command line overrides the preset. The build copies
+      # onnxruntime*.dll (Windows) and models/ next to the executable.
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DLITEROOM_ONNX=ON -DONNXRUNTIME_DIR="${{ env.ONNXRUNTIME_DIR }}"
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
@@ -49,23 +96,33 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # "v1.2.3" -> "1.2.3". Read from the environment rather than pasting
-          # ${{ github.ref_name }} into the script text.
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
 
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path build/release/literoom.exe -DestinationPath dist/literoom-windows-x64.zip
+          # onnxruntime.dll needs the Visual C++ runtime (MSVCP140 / VCRUNTIME140),
+          # which a clean Windows machine may not have. Ship those four DLLs
+          # next to the exe ("app-local deployment"; Microsoft allows this).
+          # They come from the Visual Studio on this runner.
+          $crt = Get-ChildItem "$env:VCToolsRedistDir/x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          foreach ($n in "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+            Copy-Item (Join-Path $crt.FullName $n) build/release/
+          }
 
-          # Inno Setup is preinstalled on GitHub's Windows images; install it
-          # only if this image happens not to have it.
+          New-Item -ItemType Directory -Force dist | Out-Null
+
+          # Zip: exe + all DLLs + models, inside a literoom/ folder.
+          New-Item -ItemType Directory -Force stage/literoom | Out-Null
+          Copy-Item build/release/literoom.exe stage/literoom/
+          Copy-Item build/release/*.dll stage/literoom/
+          Copy-Item build/release/models stage/literoom/models -Recurse
+          Compress-Archive -Path stage/literoom -DestinationPath dist/literoom-windows-x64.zip
+
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-          # literoom.iss resolves its paths relative to its own folder:
-          # reads build/release/literoom.exe, writes build/installer/.
+          # literoom.iss picks up the DLLs and models from build/release.
           & $iscc "/DMyAppVersion=$version" packaging/windows/literoom.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item build/installer/literoom-setup-x64.exe dist/
@@ -74,23 +131,21 @@ jobs:
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          # "v1.2.3" -> "1.2.3". In a Debian version "-" starts the packaging
-          # revision, so a pre-release "1.2.0-rc1" becomes "1.2.0~rc1", which
-          # sorts *before* 1.2.0 as it should.
           VERSION="${GITHUB_REF_NAME#v}"
           DEB_VERSION="${VERSION/-/\~}"
 
-          mkdir -p dist cpack-out
-          tar -czf dist/literoom-linux-x64.tar.gz -C build/release literoom
+          mkdir -p dist cpack-out stage
 
-          # CPack works from the install rules in CMakeLists.txt. -B keeps its
-          # scratch files out of dist/, so only the finished .deb is copied in.
+          # Tarball: install into a staging folder using the same install rules
+          # the .deb uses (launcher, binary, libonnxruntime, models), then tar
+          # it up. It runs from wherever it is extracted: bin/literoom.
+          cmake --install build/release --prefix stage/literoom
+          tar -czf dist/literoom-linux-x64.tar.gz -C stage literoom
+
           cpack --config build/release/CPackConfig.cmake -G DEB \
                 -D CPACK_PACKAGE_VERSION="$DEB_VERSION" -B cpack-out
           cp cpack-out/*.deb dist/
 
-      # Prints the package metadata (including the auto-detected Depends:) and
-      # file list into the log, and fails if the .deb isn't well formed.
       - name: Inspect .deb (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -101,7 +156,6 @@ jobs:
         with:
           name: package-${{ matrix.os }}
           path: dist/*.*
-          # An empty dist/ should fail the job, not publish an empty release.
           if-no-files-found: error
 
   publish:

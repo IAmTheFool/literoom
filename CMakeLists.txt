@@ -139,7 +139,43 @@ endif()
 # Install
 # ------------------------------------------------------------------------
 include(GNUInstallDirs)
-install(TARGETS literoom RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+if(LITEROOM_ONNX AND UNIX AND NOT APPLE)
+    # ONNX build on Linux: the app needs libonnxruntime and the models next to
+    # it, so it gets a private folder instead of sitting alone in bin/:
+    #   bin/literoom                          launcher script (what users run)
+    #   lib/literoom/literoom                 the real binary
+    #   lib/literoom/libonnxruntime.so*       bundled ONNX Runtime
+    #   share/literoom/models/*.onnx          MobileSAM models
+    # The launcher finds everything relative to itself, so the same tree works
+    # from /usr (the .deb) and from an extracted tarball.
+    set(LITEROOM_PRIVATE_DIR lib/literoom)
+    install(TARGETS literoom RUNTIME DESTINATION ${LITEROOM_PRIVATE_DIR})
+    # Look for libonnxruntime next to the binary. (BUILD_RPATH above points at
+    # the build machine's copy; CMake swaps it for this one at install time.)
+    set_target_properties(literoom PROPERTIES INSTALL_RPATH "$ORIGIN")
+
+    # GLOB matches the whole symlink chain (libonnxruntime.so -> .so.1 -> .so.1.x.y)
+    # and install(FILES) keeps the links as links.
+    file(GLOB _ort_libs "${_ort_lib_dir}/libonnxruntime*.so*")
+    install(FILES ${_ort_libs} DESTINATION ${LITEROOM_PRIVATE_DIR})
+    install(DIRECTORY models/ DESTINATION share/literoom/models FILES_MATCHING PATTERN "*.onnx")
+
+    # The app looks for models in <exe folder>/models or $LITEROOM_MODELS; the
+    # launcher sets the variable unless the user already did.
+    set(_launcher "${CMAKE_CURRENT_BINARY_DIR}/literoom-launcher")
+    file(WRITE "${_launcher}"
+"#!/bin/sh\n"
+"here=\"$(dirname \"$(readlink -f \"$0\")\")\"\n"
+"if [ -z \"$LITEROOM_MODELS\" ]; then\n"
+"    LITEROOM_MODELS=\"$here/../share/literoom/models\"\n"
+"    export LITEROOM_MODELS\n"
+"fi\n"
+"exec \"$here/../lib/literoom/literoom\" \"$@\"\n")
+    install(PROGRAMS "${_launcher}" RENAME literoom DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+    install(TARGETS literoom RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 # Linux desktop integration: the menu entry and its icon. The icon name in
 # literoom.desktop ("Icon=literoom") is looked up in the hicolor theme, so the
