@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Windows MSVC Debug",       os: windows-latest, preset: msvc-debug }
+          - { name: "Windows MSVC Release",     os: windows-latest, preset: msvc-release }
+          - { name: "Linux GCC Debug",          os: ubuntu-latest,  preset: gcc-debug }
+          - { name: "Linux GCC Release",        os: ubuntu-latest,  preset: gcc-release }
+          - { name: "Linux GCC Debug + ASan",   os: ubuntu-latest,  preset: gcc-debug-asan }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The presets use cl.exe with Ninja, so the MSVC environment must be
+      # loaded into the shell first.
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build pkg-config g++-14 gcc-14 \
+            libwayland-dev libcairo2-dev libpango1.0-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libxkbcommon-dev \
+            libpng-dev libjpeg-dev
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # literoom_golden_render is skipped (exit code 77) when there is no golden
+      # file for the compiler/config (e.g. GNU Release), so it never fails here.
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}

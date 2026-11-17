@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Literoom
+Comment=A small literoom app
+Exec=literoom
+Icon=literoom
+Terminal=false
+Categories=Utility;
