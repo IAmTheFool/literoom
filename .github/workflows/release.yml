@@ -44,25 +44,65 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
-      # ---- Windows: zip ----
+      # ---- Windows: zip + Inno Setup installer ----
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # "v1.2.3" -> "1.2.3". Read from the environment rather than pasting
+          # ${{ github.ref_name }} into the script text.
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path build/release/literoom.exe -DestinationPath dist/literoom-windows-x64.zip
 
-      # ---- Linux: tarball ----
+          # Inno Setup is preinstalled on GitHub's Windows images; install it
+          # only if this image happens not to have it.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          # literoom.iss resolves its paths relative to its own folder:
+          # reads build/release/literoom.exe, writes build/installer/.
+          & $iscc "/DMyAppVersion=$version" packaging/windows/literoom.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item build/installer/literoom-setup-x64.exe dist/
+
+      # ---- Linux: tarball + .deb ----
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          mkdir -p dist
+          # "v1.2.3" -> "1.2.3". In a Debian version "-" starts the packaging
+          # revision, so a pre-release "1.2.0-rc1" becomes "1.2.0~rc1", which
+          # sorts *before* 1.2.0 as it should.
+          VERSION="${GITHUB_REF_NAME#v}"
+          DEB_VERSION="${VERSION/-/\~}"
+
+          mkdir -p dist cpack-out
           tar -czf dist/literoom-linux-x64.tar.gz -C build/release literoom
+
+          # CPack works from the install rules in CMakeLists.txt. -B keeps its
+          # scratch files out of dist/, so only the finished .deb is copied in.
+          cpack --config build/release/CPackConfig.cmake -G DEB \
+                -D CPACK_PACKAGE_VERSION="$DEB_VERSION" -B cpack-out
+          cp cpack-out/*.deb dist/
+
+      # Prints the package metadata (including the auto-detected Depends:) and
+      # file list into the log, and fails if the .deb isn't well formed.
+      - name: Inspect .deb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
 
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.os }}
           path: dist/*.*
+          # An empty dist/ should fail the job, not publish an empty release.
+          if-no-files-found: error
 
   publish:
     needs: package

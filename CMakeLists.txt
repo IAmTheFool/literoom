@@ -11,6 +11,8 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(NOT WIN32)
     enable_language(C)   # only for liteui's vendored Wayland protocol .c files
+else()
+    enable_language(RC)  # compiles packaging/windows/literoom.rc (the exe's icon)
 endif()
 
 # ------------------------------------------------------------------------
@@ -47,6 +49,15 @@ file(GLOB_RECURSE LITEROOM_HEADERS CONFIGURE_DEPENDS ${LITEROOM_SRC}/*.hpp)
 add_executable(literoom ${LITEROOM_SRC}/main.cpp ${LITEROOM_HEADERS})
 target_include_directories(literoom PRIVATE ${LITEROOM_SRC})
 target_link_libraries(literoom PRIVATE liteui::liteui Threads::Threads)
+
+# Windows: embed the icon (Explorer, taskbar, Alt-Tab) via the resource file.
+# OBJECT_DEPENDS makes a changed .ico trigger a rebuild of the resource.
+if(WIN32)
+    set(LITEROOM_RC ${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/literoom.rc)
+    target_sources(literoom PRIVATE ${LITEROOM_RC})
+    set_source_files_properties(${LITEROOM_RC} PROPERTIES
+        OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/literoom.ico)
+endif()
 
 # Same folder tree in Visual Studio's Solution Explorer.
 source_group(TREE ${LITEROOM_SRC} FILES ${LITEROOM_SRC}/main.cpp ${LITEROOM_HEADERS})
@@ -129,6 +140,39 @@ endif()
 # ------------------------------------------------------------------------
 include(GNUInstallDirs)
 install(TARGETS literoom RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Linux desktop integration: the menu entry and its icon. The icon name in
+# literoom.desktop ("Icon=literoom") is looked up in the hicolor theme, so the
+# file must be called literoom.png and sit in a <size>x<size>/apps folder.
+if(UNIX AND NOT APPLE)
+    install(FILES packaging/linux/literoom.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES packaging/icons/literoom.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
+endif()
+
+# ------------------------------------------------------------------------
+# Packaging (.deb via CPack). The Windows installer is built by Inno Setup
+# (packaging/windows/literoom.iss), not CPack.
+#   cpack --config build/release/CPackConfig.cmake -G DEB
+# The release workflow overrides CPACK_PACKAGE_VERSION with the git tag.
+# ------------------------------------------------------------------------
+if(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR                    "DEB")
+    set(CPACK_PACKAGE_NAME                 "literoom")
+    set(CPACK_PACKAGE_VENDOR               "Roshan")
+    set(CPACK_PACKAGE_CONTACT              "Roshan <roshan@example.com>")  # TODO: real address
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY  "Lightweight photo editor")
+    # Debian packages belong in /usr, not CMake's default /usr/local.
+    set(CPACK_PACKAGING_INSTALL_PREFIX     "/usr")
+    set(CPACK_DEBIAN_PACKAGE_SECTION       "graphics")
+    # Let dpkg-shlibdeps work out "Depends:" (libwayland, cairo, pango, ...)
+    # from the libraries the built binary actually links against.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS     ON)
+    # Name the file <name>_<version>_<arch>.deb
+    set(CPACK_DEBIAN_FILE_NAME             DEB-DEFAULT)
+    include(CPack)   # must come after the install() rules and CPACK_* variables
+endif()
 
 # ------------------------------------------------------------------------
 # Tests (Catch2 v3)
