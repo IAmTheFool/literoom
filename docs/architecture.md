@@ -32,8 +32,18 @@ core  →  color / detail / mask  →  io  →  edit  →  render
 | `edit/` | `AdjustmentSet` (the edit state with undo) and `RenderParams` (the frozen form of it) |
 | `render/` | The float pixel pass (`render_core`), the synchronous entry (`render`), the byte reference (`render_bytes`), histogram and scopes |
 | `workers/` | Background workers: the cancellable "latest wins" worker, thumbnails, batch export, LUT previews |
+| `app/` | **Not engine.** The UI shell, split out of `main.cpp` into files that `main.cpp` `#include`s (so the program is still one translation unit). It sits above every layer in the list: it may include anything, and nothing outside `app/` and `main.cpp` may include it. See [app/ and main.cpp](#app-and-maincpp). |
 
 A header may include headers from folders below its own, never above. The few exceptions, and the full per-file list, are in [headers.md](headers.md#where-things-live).
+
+### `app/` and `main.cpp`
+
+`src/app/` holds the UI shell as it is split out of `main.cpp`, one concern per file (the render-worker glue, `EditorState`, the filmstrip, the panes, and so on). The rules:
+
+- **Still one translation unit.** Files in `app/` are `#pragma once` headers that only `main.cpp` includes, in the order the code appears today (several functions are forward-declared and depend on that order). The golden test and the LUT-pane test compile `main.cpp` itself, so they pick the split-out code up unchanged and `CMakeLists.txt` needs no edit: its `GLOB_RECURSE` already lists everything under `src/`.
+- **One direction.** `app/` files may include the engine, `workers/` and LiteUI. No engine header, and no worker, may include anything from `app/`.
+- **The thread rule is unchanged.** A worker file moved into `app/` still never reads `state` and never calls LiteUI (except `wake()`); see [threading.md](threading.md).
+- **Not in headers.md.** `headers.md` documents engine headers only. Every `app/` file, with its types, constants and functions, is documented in [app-headers.md](app-headers.md); `src/app/README.md` has the include order and the rules for adding code.
 
 `main.cpp` is long (about 11,900 lines) because it holds all the UI. A few of its big sections are fenced with `// BEGIN <name>` / `// END <name>` comments (`renderworker`, `geometryworker`, `filmstrip`, `maskui`, `compare`), which mark the parts that move together if the file is ever split. It reads roughly top to bottom as: layout constants and colors, the render worker, crop and filmstrip state, `EditorState`, handing worker results back to the UI thread, crop, the geometry worker, rotate/flip and straighten, opening a file (the decode worker), object segmentation, saving and loading edits, Sync Settings (its worker), batch export (its worker), the filmstrip (with the rating, flag and label filter bar and commands), small reusable widgets, one section per pane (plus the History panel, the Presets list, which also holds the Copy / Paste Settings clipboard, the LUTs list with its preview polling, and Before / After), and finally `main()` which wires up shortcuts, menus, the workers' wake-ups and the event loop.
 
