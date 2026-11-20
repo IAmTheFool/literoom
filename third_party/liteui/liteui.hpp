@@ -24,7 +24,7 @@
 #define LITEUI_HPP_INCLUDED
 
 #define LITEUI_VERSION_MAJOR 0
-#define LITEUI_VERSION_MINOR 9
+#define LITEUI_VERSION_MINOR 10
 
 #include <algorithm>
 #include <array>
@@ -325,6 +325,41 @@ private:
 
 using PointerHandler = std::function<void(PointerEvent &)>;
 using WheelHandler = std::function<void(WheelEvent &)>;
+
+// ---- File / text drop ----------------------------------------------------
+// Something dragged in from another application (a file manager, a browser,
+// an editor) and dropped on the window. Views opt in with onDrop; onDragEnter /
+// onDragOver / onDragLeave let the same view show a highlight.
+//
+//  * The target is the DEEPEST enabled view under the pointer that has an
+//    onDrop handler (disabled views are transparent, like pointer events).
+//    Only that one view is told: nothing bubbles. When no view qualifies, the
+//    window-level LiteUI::setFileDropHandler gets the drop instead, if set.
+//  * onDragEnter fires when the drag first reaches the target (followed at
+//    once by an onDragOver with the entry position), onDragOver on every
+//    motion inside it, onDragLeave when it moves to another target,
+//    leaves the window, or is dropped (onDragLeave runs right BEFORE onDrop,
+//    so a highlight is always cleared). None of them bubble.
+//  * A drag is only accepted (drop cursor/effect "copy") over a target or
+//    when a window-level handler exists; elsewhere the OS shows "not allowed".
+//  * `paths` and `text` are only filled in onDrop. Before the drop, only
+//    `hasFiles` / `hasText` say what is being dragged (Wayland cannot read
+//    the data before the drop).
+//  * `paths` are absolute UTF-8 file-system paths. `text` is dropped text, or
+//    the URL(s) one per line when a URI list holds no files.
+//  * Handlers run on the UI thread and should return quickly: on Windows the
+//    dragging application waits for them. Start long work elsewhere.
+//  * Nothing is moved, deleted or opened: the drop is always a "copy".
+struct DropEvent {
+  float x = 0, y = 0; // local to the view whose handler is running
+  float windowX = 0, windowY = 0;
+  bool hasFiles = false; // the drag carries files
+  bool hasText = false;  // the drag carries text or a URL
+  std::vector<std::string> paths; // onDrop only
+  std::string text;               // onDrop only
+  KeyModifiers mods;
+};
+using DropHandler = std::function<void(DropEvent &)>;
 
 // The type of View::onClick (and Canvas::onClick). Accepts either
 //   [&](PointerEvent &e) { ... }   // bubbles to ancestors unless the handler
@@ -1186,6 +1221,79 @@ bool setText(const std::string &utf8);
 std::optional<std::string> getText();
 void setTextWithFallback(const std::string &s);
 std::string getTextWithFallback();
+
+// Linux/Wayland: text uses the window's own wl_data_device whenever it can
+// (reads: window focused; writes: focused and an input event in the last few
+// seconds), and wl-copy / wl-paste / xclip / xsel otherwise. Native text is
+// offered as text/plain;charset=utf-8, text/plain, UTF8_STRING, STRING and
+// TEXT, all UTF-8. Reads accept those plus Latin-1 STRING (converted).
+//
+// A natively copied selection is served by this process, so it would vanish
+// when the app exits. By default, if the window still owns the clipboard when
+// it is torn down, the content is handed to wl-copy / xclip (when installed)
+// so it survives, as tool-made copies always did. This is best-effort: it
+// can lose a race if another app took the clipboard in the final moments.
+// setPersistOnExit(false) turns it off; it has no effect on Windows, where
+// the clipboard already outlives the process.
+void setPersistOnExit(bool enable);
+
+// ---- Image clipboard ----------------------------------------------------
+// setImage / getImage / hasImage talk to the OS clipboard only. For the
+// in-process fallback the text API has, use the *WithFallback functions below.
+//
+// Linux:   images travel as "image/png". On Wayland the window's own
+//          wl_data_device is used when it can be: reads need keyboard focus
+//          (the compositor only sends clipboard events to the focused client),
+//          writes need focus and an input event (key press, button press, touch
+//          or focus gain) in the last few seconds, because set_selection is
+//          silently ignored without one. Otherwise, or if the compositor has
+//          no data device, it falls back to wl-copy/wl-paste or xclip.
+//          Call these from the UI thread.
+// Windows: setImage writes the registered "PNG" format AND CF_DIBV5 (alpha
+//          masks, bottom-up, straight alpha); Windows also synthesizes CF_DIB
+//          and CF_BITMAP from it. getImage tries "PNG", then CF_DIBV5, then
+//          CF_DIB (24- and 32-bit only; see parseDib for the alpha rules).
+//
+// imageSupported(): can this platform/tool combination carry an image at
+//   all? False on Linux when only xsel is installed (it is text-only) or no
+//   clipboard tool is usable; always true on Windows. Use it to tell
+//   "unsupported" apart from "the clipboard holds no image".
+// hasImage():  true if the clipboard currently offers an image (Linux: a PNG;
+//   Windows: PNG, CF_DIBV5 or CF_DIB). It only checks what is OFFERED, so
+//   getImage can still fail on data it cannot decode. On Linux this spawns a
+//   helper process, so call it on demand, not every frame.
+// setImage():  replaces the clipboard contents with the image (text is
+//   dropped). `image` is RGBA8, straight alpha, so no colour conversion
+//   happens. Returns false for an empty/malformed image, an encode failure,
+//   no image support, or a backend that failed.
+// getImage():  nullopt if there is no image, it can't be decoded, or the
+//   clipboard can't be read. 16-bit PNGs are narrowed to 8-bit.
+bool imageSupported();
+bool hasImage();
+bool setImage(const CanvasImage &image);
+std::optional<CanvasImage> getImage();
+
+// ---- Image clipboard with an in-process fallback (mirrors the text pair) ---
+// Same rules as setTextWithFallback / getTextWithFallback:
+//
+// setImageWithFallback(): always stores a copy in the in-process fallback,
+//   then tries the OS clipboard. Returns whether the OS accepted it (the copy
+//   is kept either way, so a false here still lets this process paste it
+//   back). Like any real clipboard the most recent copy wins: this drops the
+//   text fallback, and setTextWithFallback drops the image fallback. False,
+//   with nothing stored, for an empty/malformed image.
+// getImageWithFallback() / hasImageWithFallback(): if the OS clipboard can be
+//   asked, its answer is final, even "no image", so a stale in-process copy
+//   never shadows something the user copied elsewhere. The fallback is used
+//   only when the OS cannot be asked at all: no image mechanism (no tool, or
+//   only text-only xsel), or the clipboard is unreachable (Windows clipboard
+//   locked by another process; a Linux tool that would not start).
+// clearImageFallback(): frees the stored copy. It can be as large as the image
+//   (width*height*4 bytes) and otherwise lives until the next copy.
+bool setImageWithFallback(const CanvasImage &image);
+bool hasImageWithFallback();
+std::optional<CanvasImage> getImageWithFallback();
+void clearImageFallback();
 } // namespace liteui_clipboard
 
 // Text helper documented for authors of hand-built Canvas widgets: returns the
@@ -2282,6 +2390,11 @@ struct Canvas {
   PointerHandler onPointerEnter;
   PointerHandler onPointerLeave;
   WheelHandler onWheel;
+  // File / text drop — same semantics as on View (see DropEvent).
+  DropHandler onDrop;
+  DropHandler onDragEnter;
+  DropHandler onDragOver;
+  DropHandler onDragLeave;
   std::function<bool()> canvasDirtySource;
   // Retained mode (partial redraw). Off by default: every redraw clears the
   // whole canvas and onPaint repaints all of it, exactly as before.
@@ -2504,6 +2617,14 @@ public:
   PointerHandler onContextMenu; // right-button click, fired on release
   WheelHandler onWheel;         // falls through to overflow scrolling unless
                                 // a handler calls e.stopPropagation()
+
+  // File / text dragged in from another application. See DropEvent for the
+  // full rules. A view with onDrop is a drop target; the others are optional
+  // and only ever fire on the view that has onDrop.
+  DropHandler onDrop;
+  DropHandler onDragEnter;
+  DropHandler onDragOver;
+  DropHandler onDragLeave;
 
   // Left-button click (press and release on the same view). Accepts
   // `[&](PointerEvent &e) {...}` (bubbles unless stopped) or the shorter
@@ -2849,6 +2970,10 @@ public:
   // changed the display scale). The window is laid out and repainted
   // afterwards. Set it from the UI thread.
   void setScaleChangedHandler(std::function<void()> fn);
+  // Window-level file / text drop. Called, on the UI thread, for a drop that
+  // lands where no view has an onDrop handler (see DropEvent); with one set,
+  // the whole window accepts drags. Set it from the UI thread.
+  void setFileDropHandler(std::function<void(DropEvent &)> fn);
 
 private:
   LiteUIImpl *p_;
@@ -2894,6 +3019,8 @@ private:
 #include <shobjidl.h>
 #include <wincodec.h>
 #include <windows.h>
+#include <ole2.h>     // OleInitialize, RegisterDragDrop, IDropTarget (file drop)
+#include <shellapi.h> // DragAcceptFiles / DragQueryFileW (the WM_DROPFILES fallback)
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0
 #endif
@@ -2906,6 +3033,7 @@ private:
 #pragma comment(lib, "dwrite")
 #pragma comment(lib, "windowscodecs")
 #pragma comment(lib, "ole32")
+#pragma comment(lib, "shell32")
 #else
 #include "xdg-decoration-client-protocol.h" // Generated client bindings for the xdg-decoration protocol (server-side vs client-side decorations).
 #include "xdg-shell-client-protocol.h" // Generated client bindings for the xdg-shell protocol (toplevel windows, configure events).
@@ -2921,10 +3049,14 @@ private:
 #include <jpeglib.h>
 #include <pango/pangocairo.h> // Text shaping/layout + measurement; rendering still goes through GL (see ensureTextTexture)
 #include <png.h>
+#include <cctype> // tolower: case-insensitive MIME matching
+#include <chrono> // steady_clock: input-serial age for the native clipboard
+#include <csignal> // signal(SIGPIPE): the clipboard image writer
 #include <poll.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/timerfd.h>
+#include <sys/wait.h> // WIFEXITED / WEXITSTATUS on popen's pclose status
 #include <unistd.h>
 #include <wayland-client.h> // Core Wayland client protocol: displays, registries, surfaces, shm.
 #include <wayland-cursor.h> // wl_cursor_theme_load / wl_cursor_theme_get_cursor, for showing resize/arrow cursors.
@@ -3490,6 +3622,322 @@ std::optional<std::string> saveFolderPicker(const std::string &title) {
       {liteui_filepicker::Mode::SaveFolder, title, {}, {}, {}}));
 }
 
+// ==================== File / text drop ====================
+namespace liteui_drop {
+
+// What a platform backend calls into. Coordinates are LOGICAL window
+// coordinates. enter/over return whether a drop here would be accepted;
+// drop returns whether something took it.
+struct Hooks {
+  std::function<bool(float x, float y, bool files, bool text)> enter;
+  std::function<bool(float x, float y)> over;
+  std::function<void()> leave;
+  std::function<bool(float x, float y, std::vector<std::string> paths,
+                     std::string text)>
+      drop;
+};
+
+inline int hexVal(char c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+// "%20" -> " ". A '%' not followed by two hex digits is kept as it is.
+inline std::string percentDecode(const std::string &s) {
+  std::string r;
+  r.reserve(s.size());
+  for (size_t i = 0; i < s.size(); ++i) {
+    if (s[i] == '%' && i + 2 < s.size() && hexVal(s[i + 1]) >= 0 &&
+        hexVal(s[i + 2]) >= 0) {
+      r.push_back(static_cast<char>(hexVal(s[i + 1]) * 16 + hexVal(s[i + 2])));
+      i += 2;
+    } else {
+      r.push_back(s[i]);
+    }
+  }
+  return r;
+}
+
+inline bool startsWithNoCase(const std::string &s, const char *prefix) {
+  for (size_t i = 0; prefix[i]; ++i) {
+    if (i >= s.size() ||
+        std::tolower(static_cast<unsigned char>(s[i])) != prefix[i])
+      return false;
+  }
+  return true;
+}
+
+// Parses a text/uri-list (RFC 2483): one URI per line, "#" lines are
+// comments. file: URIs (file:///p, file://localhost/p, file:/p) become
+// decoded absolute paths; a file: URI naming another host, a relative path or
+// one with an embedded NUL is dropped. Every other URI is appended to `other`
+// (when given), verbatim.
+inline std::vector<std::string>
+parseUriList(const std::string &data, std::vector<std::string> *other = nullptr) {
+  std::vector<std::string> paths;
+  size_t pos = 0;
+  while (pos <= data.size()) {
+    size_t end = data.find('\n', pos);
+    if (end == std::string::npos)
+      end = data.size();
+    std::string line = data.substr(pos, end - pos);
+    pos = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' ||
+                             line.back() == '\t'))
+      line.pop_back();
+    if (line.empty() || line[0] == '#')
+      continue;
+    if (!startsWithNoCase(line, "file:")) {
+      if (other)
+        other->push_back(line);
+      continue;
+    }
+    std::string rest = line.substr(5);
+    std::string path;
+    if (rest.rfind("//", 0) == 0) {
+      const size_t slash = rest.find('/', 2);
+      const std::string host =
+          rest.substr(2, slash == std::string::npos ? std::string::npos : slash - 2);
+      if (slash == std::string::npos)
+        continue;
+      if (!host.empty() && host != "localhost")
+        continue; // a file on another machine
+      path = rest.substr(slash);
+    } else {
+      path = rest; // file:/path
+    }
+    // Drop a query/fragment (not part of a local path).
+    const size_t cut = path.find_first_of("?#");
+    if (cut != std::string::npos)
+      path.resize(cut);
+    path = percentDecode(path);
+    if (path.empty() || path[0] != '/' || path.find('\0') != std::string::npos)
+      continue;
+    paths.push_back(std::move(path));
+  }
+  return paths;
+}
+
+// UTF-16 (LE) code units -> UTF-8. A lone surrogate becomes U+FFFD.
+inline std::string utf16ToUtf8(const char16_t *u, size_t n) {
+  std::string r;
+  r.reserve(n);
+  auto put = [&r](uint32_t cp) {
+    if (cp < 0x80) {
+      r.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+      r.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+      r.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+      r.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+      r.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+      r.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+      r.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+      r.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+      r.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+      r.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+  };
+  for (size_t i = 0; i < n; ++i) {
+    const uint32_t c = u[i];
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n && u[i + 1] >= 0xDC00 &&
+        u[i + 1] <= 0xDFFF) {
+      put(0x10000 + ((c - 0xD800) << 10) + (u[i + 1] - 0xDC00));
+      ++i;
+    } else if (c >= 0xD800 && c <= 0xDFFF) {
+      put(0xFFFD);
+    } else {
+      put(c);
+    }
+  }
+  return r;
+}
+
+// Latin-1 bytes -> UTF-8 (the legacy X11 "STRING" type).
+inline std::string latin1ToUtf8(const std::string &in) {
+  std::string r;
+  r.reserve(in.size());
+  for (const char ch : in) {
+    const auto c = static_cast<unsigned char>(ch);
+    if (c < 0x80) {
+      r.push_back(static_cast<char>(c));
+    } else {
+      r.push_back(static_cast<char>(0xC0 | (c >> 6)));
+      r.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+    }
+  }
+  return r;
+}
+
+// Reads the paths out of a Windows CF_HDROP block (a DROPFILES header, then
+// NUL-separated names ended by an empty one). Bounds-checked; garbage yields
+// an empty list. A non-wide (ANSI) list is returned byte-for-byte, which is
+// exact for ASCII names; Windows has sent wide lists since NT.
+inline std::vector<std::string> parseDropFiles(const uint8_t *p, size_t n) {
+  std::vector<std::string> out;
+  if (!p || n < 20)
+    return out;
+  uint32_t off = 0, wide = 0;
+  std::memcpy(&off, p, 4);
+  std::memcpy(&wide, p + 16, 4);
+  if (off < 20 || off > n)
+    return out;
+  if (wide) {
+    const size_t units = (n - off) / 2;
+    std::vector<char16_t> u(units);
+    if (units)
+      std::memcpy(u.data(), p + off, units * 2);
+    size_t i = 0;
+    while (i < units && u[i] != 0) {
+      size_t j = i;
+      while (j < units && u[j] != 0)
+        ++j;
+      out.push_back(utf16ToUtf8(u.data() + i, j - i));
+      i = j + 1;
+    }
+  } else {
+    size_t i = off;
+    while (i < n && p[i] != 0) {
+      size_t j = i;
+      while (j < n && p[j] != 0)
+        ++j;
+      out.emplace_back(reinterpret_cast<const char *>(p + i), j - i);
+      i = j + 1;
+    }
+  }
+  return out;
+}
+
+#if defined(_WIN32)
+// The window's OLE drop target: enter/over/leave/drop from IDropTarget become
+// liteui_drop::Hooks calls. Used on the UI thread (OLE calls it there).
+// Reads CF_HDROP (files) and CF_UNICODETEXT (text); always answers "copy"
+// (or "link" when only that is allowed), never "move".
+class OleDropTarget final : public IDropTarget {
+public:
+  using Convert = std::function<void(POINTL screen, float &x, float &y)>;
+  OleDropTarget(Hooks h, Convert c) : hooks_(std::move(h)), convert_(std::move(c)) {}
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    if (riid == IID_IUnknown || riid == IID_IDropTarget) {
+      *ppv = static_cast<IDropTarget *>(this);
+      AddRef();
+      return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return static_cast<ULONG>(InterlockedIncrement(&ref_));
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const LONG r = InterlockedDecrement(&ref_);
+    if (r == 0)
+      delete this;
+    return static_cast<ULONG>(r);
+  }
+
+  HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *obj, DWORD, POINTL pt,
+                                      DWORD *effect) override {
+    files_ = has(obj, CF_HDROP);
+    text_ = has(obj, CF_UNICODETEXT);
+    float x = 0, y = 0;
+    convert_(pt, x, y);
+    accept_ = hooks_.enter && hooks_.enter(x, y, files_, text_);
+    *effect = pick(*effect);
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL pt, DWORD *effect) override {
+    float x = 0, y = 0;
+    convert_(pt, x, y);
+    accept_ = hooks_.over && hooks_.over(x, y);
+    *effect = pick(*effect);
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE DragLeave() override {
+    if (hooks_.leave)
+      hooks_.leave();
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Drop(IDataObject *obj, DWORD, POINTL pt,
+                                 DWORD *effect) override {
+    float x = 0, y = 0;
+    convert_(pt, x, y);
+    std::vector<std::string> paths;
+    std::string text;
+    std::vector<uint8_t> blob;
+    if (read(obj, CF_HDROP, blob))
+      paths = parseDropFiles(blob.data(), blob.size());
+    if (paths.empty() && read(obj, CF_UNICODETEXT, blob)) {
+      const auto *u = reinterpret_cast<const char16_t *>(blob.data());
+      size_t n = blob.size() / 2, len = 0;
+      while (len < n && u[len] != 0)
+        ++len;
+      text = utf16ToUtf8(u, len);
+    }
+    bool handled = false;
+    if (hooks_.drop && (!paths.empty() || !text.empty()))
+      handled = hooks_.drop(x, y, std::move(paths), std::move(text));
+    else if (hooks_.leave)
+      hooks_.leave(); // nothing usable: clear the highlight
+    accept_ = handled;
+    *effect = pick(*effect);
+    return S_OK;
+  }
+
+private:
+  static bool has(IDataObject *o, CLIPFORMAT cf) {
+    FORMATETC fe{cf, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    return o && o->QueryGetData(&fe) == S_OK;
+  }
+  static bool read(IDataObject *o, CLIPFORMAT cf, std::vector<uint8_t> &out) {
+    out.clear();
+    if (!o)
+      return false;
+    FORMATETC fe{cf, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    STGMEDIUM sm{};
+    if (FAILED(o->GetData(&fe, &sm)))
+      return false;
+    bool ok = false;
+    if (sm.tymed == TYMED_HGLOBAL && sm.hGlobal) {
+      const SIZE_T sz = GlobalSize(sm.hGlobal);
+      if (const void *p = GlobalLock(sm.hGlobal)) {
+        out.assign(static_cast<const uint8_t *>(p),
+                   static_cast<const uint8_t *>(p) + sz);
+        GlobalUnlock(sm.hGlobal);
+        ok = true;
+      }
+    }
+    ReleaseStgMedium(&sm);
+    return ok;
+  }
+  DWORD pick(DWORD allowed) const {
+    if (!accept_)
+      return DROPEFFECT_NONE;
+    if (allowed & DROPEFFECT_COPY)
+      return DROPEFFECT_COPY;
+    if (allowed & DROPEFFECT_LINK)
+      return DROPEFFECT_LINK;
+    return DROPEFFECT_NONE; // never "move": we do not delete the source
+  }
+
+  LONG ref_ = 1;
+  Hooks hooks_;
+  Convert convert_;
+  bool files_ = false, text_ = false, accept_ = false;
+};
+#endif // _WIN32
+
+} // namespace liteui_drop
+
 // ==================== Clipboard ====================
 namespace liteui_clipboard {
 
@@ -3499,6 +3947,13 @@ namespace liteui_clipboard {
 // so it can't paste stale text over something the user copied elsewhere.
 inline std::string &internalFallback() {
   static std::string s;
+  return s;
+}
+
+// Same idea for images: the in-process copy made by setImageWithFallback,
+// consulted only when the OS clipboard cannot be asked (see getImageWithFallback).
+inline std::optional<CanvasImage> &internalImageFallback() {
+  static std::optional<CanvasImage> s;
   return s;
 }
 
@@ -3531,6 +3986,272 @@ std::string toCRLF(const std::string &in) {
   }
   return out;
 }
+
+namespace detail {
+// Outcome of one platform image-clipboard operation.
+enum class ClipStatus {
+  Ok,          // done / an image is present
+  Unsupported, // this backend cannot carry images (no tool, xsel, not built)
+  None,        // the clipboard works but holds no image
+  Error,       // the backend failed, or the data was not what it claimed
+  Unreachable  // the clipboard exists but could not be reached at all (a tool
+               // that would not start, a Windows clipboard another process
+               // holds open): the in-process fallback applies, like getText's
+               // nullopt
+};
+
+// Upper bound on the PNG bytes we will write to or read from the clipboard.
+// Stops a runaway/hostile selection owner from exhausting memory.
+inline constexpr size_t kMaxImageBytes = size_t(256) << 20;
+// Same idea for text read from a native Wayland selection.
+inline constexpr size_t kMaxTextBytes = size_t(64) << 20;
+
+// Whether a clipboard this process still owns at teardown is handed to an
+// external tool so it outlives us (see WlClipboard::persist). Only Wayland's
+// native path needs it; the setting exists on every platform.
+inline bool &persistOnExit() {
+  static bool v = true;
+  return v;
+}
+
+inline bool hasPngSignature(const std::vector<uint8_t> &b) {
+  static const uint8_t sig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  return b.size() >= sizeof(sig) && std::memcmp(b.data(), sig, sizeof(sig)) == 0;
+}
+
+// True when `img` is a well-formed, non-empty RGBA8 image: positive size and
+// pixels.size() == w*h*4 (checked without overflow).
+inline bool validCanvasImage(const CanvasImage &img) {
+  if (img.width <= 0 || img.height <= 0)
+    return false;
+  const size_t w = static_cast<size_t>(img.width);
+  const size_t h = static_cast<size_t>(img.height);
+  if (w > std::numeric_limits<size_t>::max() / 4 / h)
+    return false;
+  return img.pixels.size() == w * h * 4;
+}
+
+// CanvasImage -> PNG bytes. CanvasImage is RGBA8 straight-alpha, already what
+// the encoder wants, so this is a plain copy into an ImageBuffer, no colour
+// conversion. False if the image is malformed, encoding fails, or the result
+// exceeds kMaxImageBytes.
+inline bool encodeClipboardPng(const CanvasImage &img,
+                               std::vector<uint8_t> &png) {
+  png.clear();
+  if (!validCanvasImage(img))
+    return false;
+  auto buf = ImageBuffer::create(static_cast<uint32_t>(img.width),
+                                 static_cast<uint32_t>(img.height),
+                                 PixelFormat::RGBA8_UNORM);
+  if (!buf || buf->pixels.size() != img.pixels.size())
+    return false;
+  std::memcpy(buf->pixels.data(), img.pixels.data(), img.pixels.size());
+  liteui_image::PngEncodeOptions opt;
+  opt.compression = 1; // runs on the UI thread: favour speed over size
+  if (!liteui_image::encodePngMemory(png, *buf, nullptr, opt) || png.empty() ||
+      png.size() > kMaxImageBytes) {
+    png.clear();
+    return false;
+  }
+  return true;
+}
+
+// ---- DIB (device-independent bitmap) <-> CanvasImage ----------------------
+// Plain byte-offset code with no Win32 types, so it is platform-neutral and
+// unit-testable anywhere. Only Windows uses it. All fields are little-endian.
+inline uint16_t dibGet16(const uint8_t *p) {
+  return static_cast<uint16_t>(p[0] | (p[1] << 8));
+}
+inline uint32_t dibGet32(const uint8_t *p) {
+  return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+         (static_cast<uint32_t>(p[2]) << 16) |
+         (static_cast<uint32_t>(p[3]) << 24);
+}
+inline void dibPut16(uint8_t *p, uint16_t v) {
+  p[0] = static_cast<uint8_t>(v);
+  p[1] = static_cast<uint8_t>(v >> 8);
+}
+inline void dibPut32(uint8_t *p, uint32_t v) {
+  for (int i = 0; i < 4; ++i)
+    p[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+
+// Builds a packed CF_DIBV5 block: a 124-byte BITMAPV5HEADER followed by
+// bottom-up 32-bit BGRA rows (BI_BITFIELDS, alpha mask 0xFF000000, sRGB).
+// Alpha is STRAIGHT (not premultiplied). False if the image is malformed or
+// the block would exceed kMaxImageBytes.
+inline bool buildDibV5(const CanvasImage &img, std::vector<uint8_t> &out) {
+  out.clear();
+  if (!validCanvasImage(img))
+    return false;
+  constexpr size_t kHdr = 124;
+  const size_t w = static_cast<size_t>(img.width);
+  const size_t h = static_cast<size_t>(img.height);
+  const size_t pixBytes = w * h * 4; // validCanvasImage ruled out overflow
+  if (pixBytes > kMaxImageBytes - kHdr)
+    return false;
+  out.assign(kHdr + pixBytes, 0);
+  uint8_t *hd = out.data();
+  dibPut32(hd + 0, static_cast<uint32_t>(kHdr)); // bV5Size
+  dibPut32(hd + 4, static_cast<uint32_t>(w));    // bV5Width
+  dibPut32(hd + 8, static_cast<uint32_t>(h));    // bV5Height (> 0: bottom-up)
+  dibPut16(hd + 12, 1);                          // bV5Planes
+  dibPut16(hd + 14, 32);                         // bV5BitCount
+  dibPut32(hd + 16, 3);                          // bV5Compression = BI_BITFIELDS
+  dibPut32(hd + 20, static_cast<uint32_t>(pixBytes)); // bV5SizeImage
+  dibPut32(hd + 40, 0x00FF0000u);                // bV5RedMask
+  dibPut32(hd + 44, 0x0000FF00u);                // bV5GreenMask
+  dibPut32(hd + 48, 0x000000FFu);                // bV5BlueMask
+  dibPut32(hd + 52, 0xFF000000u);                // bV5AlphaMask
+  dibPut32(hd + 56, 0x73524742u);                // bV5CSType = LCS_sRGB ('sRGB')
+  dibPut32(hd + 108, 4);                         // bV5Intent = LCS_GM_IMAGES
+  uint8_t *dst = out.data() + kHdr;
+  for (size_t y = 0; y < h; ++y) {
+    const uint8_t *src = img.pixels.data() + (h - 1 - y) * w * 4; // flip
+    for (size_t x = 0; x < w; ++x, src += 4, dst += 4) {
+      dst[0] = src[2]; // B
+      dst[1] = src[1]; // G
+      dst[2] = src[0]; // R
+      dst[3] = src[3]; // A
+    }
+  }
+  return true;
+}
+
+// Parses a packed DIB (the payload of CF_DIB or CF_DIBV5) into straight RGBA8.
+// Supports 24-bit BI_RGB and 32-bit BI_RGB / BI_BITFIELDS / BI_ALPHABITFIELDS,
+// bottom-up or top-down, with a BITMAPINFOHEADER or V4/V5 header. Anything
+// else (palettised, 16-bit, RLE, JPEG/PNG-compressed, OS/2 core header) is
+// refused, so the caller falls through to the next format.
+//
+// Alpha rules (a DIB cannot say whether alpha is premultiplied, so it is
+// ALWAYS treated as straight; no un-premultiply is attempted because the two
+// cases cannot be told apart reliably):
+//   * 24-bit, or 32-bit BI_RGB with a plain header (CF_DIB): the 4th byte is
+//     unused by the format and often 0, so the image is opaque.
+//   * a non-zero alpha mask (bitfields, or a V4/V5 header's bV5AlphaMask):
+//     alpha is read through it.
+//   * a read alpha channel that is 0 in EVERY pixel is treated as "the source
+//     did not fill alpha" and the image becomes opaque.
+inline bool parseDib(const uint8_t *d, size_t size, CanvasImage &out) {
+  out = CanvasImage();
+  if (!d || size < 40)
+    return false;
+  const uint32_t hdr = dibGet32(d);
+  if (hdr < 40 || hdr > size)
+    return false;
+  const int32_t wRaw = static_cast<int32_t>(dibGet32(d + 4));
+  const int32_t hRaw = static_cast<int32_t>(dibGet32(d + 8));
+  const uint16_t planes = dibGet16(d + 12), bpp = dibGet16(d + 14);
+  const uint32_t comp = dibGet32(d + 16), clrUsed = dibGet32(d + 32);
+  constexpr uint32_t BI_RGB_ = 0, BI_BITFIELDS_ = 3, BI_ALPHABITFIELDS_ = 6;
+  if (wRaw <= 0 || hRaw == 0 || planes != 1)
+    return false;
+  if (bpp != 24 && bpp != 32)
+    return false;
+  const bool bitfields =
+      bpp == 32 && (comp == BI_BITFIELDS_ || comp == BI_ALPHABITFIELDS_);
+  if (comp != BI_RGB_ && !bitfields)
+    return false;
+  const bool topDown = hRaw < 0;
+  const uint64_t w = static_cast<uint64_t>(wRaw);
+  const uint64_t h = topDown ? static_cast<uint64_t>(-static_cast<int64_t>(hRaw))
+                             : static_cast<uint64_t>(hRaw);
+  if (w > static_cast<uint64_t>(std::numeric_limits<int>::max()) ||
+      h > static_cast<uint64_t>(std::numeric_limits<int>::max()) ||
+      w * h * 4 > kMaxImageBytes)
+    return false;
+
+  uint32_t mR = 0x00FF0000u, mG = 0x0000FF00u, mB = 0x000000FFu, mA = 0;
+  uint64_t off = hdr;
+  if (bitfields) {
+    if (hdr >= 52) { // masks are inside the header (V2+/V4/V5)
+      mR = dibGet32(d + 40);
+      mG = dibGet32(d + 44);
+      mB = dibGet32(d + 48);
+      if (hdr >= 56)
+        mA = dibGet32(d + 52);
+    } else { // plain BITMAPINFOHEADER: 3 (or 4) masks follow it
+      const size_t n = comp == BI_ALPHABITFIELDS_ ? 4 : 3;
+      if (off + n * 4 > size)
+        return false;
+      mR = dibGet32(d + off);
+      mG = dibGet32(d + off + 4);
+      mB = dibGet32(d + off + 8);
+      if (n == 4)
+        mA = dibGet32(d + off + 12);
+      off += n * 4;
+    }
+    if (!mR || !mG || !mB)
+      return false;
+  } else if (bpp == 32 && hdr >= 56) {
+    mA = dibGet32(d + 52); // V4/V5 BI_RGB that still carries an alpha mask
+  }
+  if (clrUsed > 256)
+    return false;
+  off += static_cast<uint64_t>(clrUsed) * 4; // optional colour table
+
+  const uint64_t stride = ((w * bpp + 31) / 32) * 4;
+  if (off + stride * h > size)
+    return false;
+
+  struct Chan {
+    unsigned shift = 0, max = 0;
+    static Chan of(uint32_t m) {
+      Chan c;
+      if (!m)
+        return c;
+      unsigned lo = 0, hi = 31;
+      while (!((m >> lo) & 1u))
+        ++lo;
+      while (!((m >> hi) & 1u))
+        --hi;
+      c.shift = lo;
+      c.max = (hi - lo >= 31) ? 0xFFFFFFFFu : ((1u << (hi - lo + 1)) - 1u);
+      return c;
+    }
+    uint8_t get(uint32_t v, uint32_t m) const {
+      const uint64_t x = (v & m) >> shift;
+      return max == 255 ? static_cast<uint8_t>(x)
+                        : static_cast<uint8_t>((x * 255 + max / 2) / max);
+    }
+  };
+  const Chan cR = Chan::of(mR), cG = Chan::of(mG), cB = Chan::of(mB),
+             cA = Chan::of(mA);
+
+  CanvasImage img(static_cast<int>(w), static_cast<int>(h));
+  bool anyAlpha = false;
+  for (uint64_t y = 0; y < h; ++y) {
+    const uint8_t *src = d + off + (topDown ? y : h - 1 - y) * stride;
+    uint8_t *dst = img.pixels.data() + y * w * 4;
+    for (uint64_t x = 0; x < w; ++x, dst += 4) {
+      if (bpp == 24) {
+        const uint8_t *px = src + x * 3;
+        dst[0] = px[2];
+        dst[1] = px[1];
+        dst[2] = px[0];
+        dst[3] = 255;
+      } else {
+        const uint32_t v = dibGet32(src + x * 4);
+        dst[0] = cR.get(v, mR);
+        dst[1] = cG.get(v, mG);
+        dst[2] = cB.get(v, mB);
+        if (mA) {
+          dst[3] = cA.get(v, mA);
+          anyAlpha = anyAlpha || dst[3] != 0;
+        } else {
+          dst[3] = 255;
+        }
+      }
+    }
+  }
+  if (mA && !anyAlpha) // alpha channel never filled: treat as opaque
+    for (size_t i = 3; i < img.pixels.size(); i += 4)
+      img.pixels[i] = 255;
+  out = std::move(img);
+  return true;
+}
+} // namespace detail
 
 #if defined(_WIN32)
 
@@ -3606,6 +4327,130 @@ std::optional<std::string> getText() {
   return result;
 }
 
+// ---- Windows image clipboard ----------------------------------------------
+// Write: registered "PNG" first (most apps, incl. browsers and Office, prefer
+// it because it keeps alpha), then CF_DIBV5. Formats are listed in the order
+// they were set, so the best one goes first. Windows synthesizes CF_DIB and
+// CF_BITMAP from CF_DIBV5.
+// Read: "PNG", then CF_DIBV5, then CF_DIB; the next is tried when one is
+// absent or can't be decoded. The clipboard is held only while bytes are
+// copied out; decoding happens after it is closed, so a slow decode never
+// blocks other apps.
+namespace detail {
+
+inline UINT pngClipboardFormat() {
+  static const UINT f = RegisterClipboardFormatW(L"PNG");
+  return f; // 0 if registration failed
+}
+
+// Hands `bytes` to the clipboard as format `fmt`. Must be called with the
+// clipboard open. On success the clipboard owns the memory.
+inline bool setClipboardBytes(UINT fmt, const std::vector<uint8_t> &bytes) {
+  if (!fmt || bytes.empty())
+    return false;
+  HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes.size());
+  if (!h)
+    return false;
+  void *dst = GlobalLock(h);
+  if (!dst) {
+    GlobalFree(h);
+    return false;
+  }
+  std::memcpy(dst, bytes.data(), bytes.size());
+  GlobalUnlock(h);
+  if (!SetClipboardData(fmt, h)) {
+    GlobalFree(h); // not taken: still ours
+    return false;
+  }
+  return true;
+}
+
+// Copies format `fmt` out of the clipboard (opens and closes it). False if
+// the format is absent, empty, over kMaxImageBytes, or the clipboard is busy.
+inline bool readClipboardBytes(UINT fmt, std::vector<uint8_t> &out,
+                               bool *openFailed = nullptr) {
+  out.clear();
+  if (!fmt || !IsClipboardFormatAvailable(fmt))
+    return false;
+  if (!openClipboardRetry()) {
+    if (openFailed)
+      *openFailed = true; // locked by another process, not "no such format"
+    return false;
+  }
+  bool ok = false;
+  if (HANDLE h = GetClipboardData(fmt)) {
+    const SIZE_T n = GlobalSize(h);
+    if (n > 0 && n <= kMaxImageBytes) {
+      if (const void *p = GlobalLock(h)) {
+        const auto *b = static_cast<const uint8_t *>(p);
+        out.assign(b, b + n);
+        GlobalUnlock(h);
+        ok = true;
+      }
+    }
+  }
+  CloseClipboard();
+  return ok;
+}
+
+inline bool osImageSupported() { return true; }
+
+inline ClipStatus osWriteImage(const CanvasImage &img) {
+  // Encode BEFORE opening the clipboard: the encode is the slow part.
+  std::vector<uint8_t> png, dib;
+  const bool havePng = encodeClipboardPng(img, png);
+  const bool haveDib = buildDibV5(img, dib);
+  if (!havePng && !haveDib)
+    return ClipStatus::Error;
+  if (!openClipboardRetry())
+    return ClipStatus::Unreachable;
+  EmptyClipboard();
+  bool ok = false;
+  if (havePng)
+    ok = setClipboardBytes(pngClipboardFormat(), png) || ok;
+  if (haveDib)
+    ok = setClipboardBytes(CF_DIBV5, dib) || ok;
+  CloseClipboard();
+  return ok ? ClipStatus::Ok : ClipStatus::Error;
+}
+
+inline ClipStatus osReadImage(CanvasImage &out) {
+  out = CanvasImage();
+  const UINT pngFmt = pngClipboardFormat();
+  bool anyOffered = false, couldNotOpen = false;
+  std::vector<uint8_t> bytes;
+
+  if (pngFmt && IsClipboardFormatAvailable(pngFmt)) {
+    anyOffered = true;
+    if (readClipboardBytes(pngFmt, bytes, &couldNotOpen) &&
+        hasPngSignature(bytes))
+      if (auto img = liteui_image::decodeMemory(bytes.data(), bytes.size())) {
+        out = std::move(*img);
+        return ClipStatus::Ok;
+      }
+  }
+  for (UINT fmt : {static_cast<UINT>(CF_DIBV5), static_cast<UINT>(CF_DIB)}) {
+    if (!IsClipboardFormatAvailable(fmt))
+      continue;
+    anyOffered = true;
+    if (readClipboardBytes(fmt, bytes, &couldNotOpen) &&
+        parseDib(bytes.data(), bytes.size(), out))
+      return ClipStatus::Ok;
+  }
+  if (!anyOffered)
+    return ClipStatus::None;
+  return couldNotOpen ? ClipStatus::Unreachable : ClipStatus::Error;
+}
+
+inline ClipStatus osHasImage() {
+  const UINT pngFmt = pngClipboardFormat();
+  if ((pngFmt && IsClipboardFormatAvailable(pngFmt)) ||
+      IsClipboardFormatAvailable(CF_DIBV5) || IsClipboardFormatAvailable(CF_DIB))
+    return ClipStatus::Ok;
+  return ClipStatus::None;
+}
+} // namespace detail
+
 #else // Linux: shell out to whatever clipboard tool is usable here.
 
 namespace detail {
@@ -3622,6 +4467,9 @@ inline bool envSet(const char *name) {
 
 struct Tools {
   std::string copyCmd, pasteCmd; // both empty = no usable clipboard tool
+  // PNG variants. All empty when the chosen tool can't do images (xsel).
+  // listCmd prints the offered MIME types / targets, one per line.
+  std::string imageCopyCmd, imagePasteCmd, imageListCmd;
 };
 
 // Detected once and cached. A tool only counts if its display server is
@@ -3636,22 +4484,1079 @@ inline const Tools &tools() {
       // "--type text" makes wl-paste refuse non-text contents (an image)
       // instead of dumping binary data into the editor.
       r.pasteCmd = "wl-paste --no-newline --type text";
+      r.imageCopyCmd = "wl-copy --type image/png";
+      r.imagePasteCmd = "wl-paste --type image/png";
+      r.imageListCmd = "wl-paste --list-types";
     } else if (envSet("DISPLAY") && commandExists("xclip")) {
       r.copyCmd = "xclip -selection clipboard";
       r.pasteCmd = "xclip -selection clipboard -o";
+      r.imageCopyCmd = "xclip -selection clipboard -t image/png";
+      r.imagePasteCmd = "xclip -selection clipboard -t image/png -o";
+      r.imageListCmd = "xclip -selection clipboard -t TARGETS -o";
     } else if (envSet("DISPLAY") && commandExists("xsel")) {
       r.copyCmd = "xsel --clipboard --input";
       r.pasteCmd = "xsel --clipboard --output";
+      // xsel is text-only: image commands stay empty => "unsupported".
     }
     return r;
   }();
   return t;
 }
 
+// True when a tool process exited normally with status 0. pclose() returns
+// the wait status, or -1 on error.
+inline bool exitedOk(int status) {
+  return status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+// Writing to a tool that died early raises SIGPIPE, which would kill the
+// whole app. Ignore it for the duration of one write and restore after.
+struct SigPipeGuard {
+  using Handler = void (*)(int);
+  Handler prev;
+  SigPipeGuard() : prev(std::signal(SIGPIPE, SIG_IGN)) {}
+  ~SigPipeGuard() {
+    if (prev != SIG_ERR)
+      std::signal(SIGPIPE, prev);
+  }
+  SigPipeGuard(const SigPipeGuard &) = delete;
+  SigPipeGuard &operator=(const SigPipeGuard &) = delete;
+};
+
+// Runs `cmd`, collecting stdout (binary-safe) into `out`. `limit` caps the
+// bytes kept; exceeding it sets `tooBig`. Returns the pclose status, or -1 if
+// the process couldn't be started.
+inline int runCapture(const std::string &cmd, std::vector<uint8_t> &out,
+                      size_t limit, bool &tooBig) {
+  out.clear();
+  tooBig = false;
+  FILE *pipe = popen((cmd + " 2>/dev/null").c_str(), "r");
+  if (!pipe)
+    return -1;
+  uint8_t buf[16384];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof(buf), pipe)) > 0) {
+    if (out.size() + n > limit) {
+      tooBig = true;
+      break; // pclose below closes our end; the tool gets EPIPE and stops
+    }
+    out.insert(out.end(), buf, buf + n);
+  }
+  return pclose(pipe);
+}
+
+// The compositor's own clipboard (wl_data_device), implemented by WlClipboard
+// below and owned by the window. When present and usable it is preferred over
+// spawning wl-copy / wl-paste / xclip: no process per call, no extra
+// dependency, and it works on compositors that offer no such tool. UI thread
+// only. The window registers itself here and clears the pointer on teardown.
+struct NativeClipboard {
+  // A data device exists, so the native path can ever work.
+  virtual bool available() const = 0;
+  // The window has keyboard focus: the compositor only sends `selection`
+  // events to the focused client, so the cached offer is trustworthy.
+  virtual bool canRead() const = 0;
+  // Focused AND holding a recent input serial, which set_selection requires.
+  virtual bool canWrite() const = 0;
+  virtual ClipStatus hasPng() = 0;
+  virtual ClipStatus readPng(std::vector<uint8_t> &png) = 0;
+  virtual ClipStatus writePng(const std::vector<uint8_t> &png) = 0;
+  // UTF-8 text. readText: Ok = text in `utf8`; None = the clipboard holds no
+  // text (or an empty string); Error = the source stalled / was unreadable.
+  virtual ClipStatus readText(std::string &utf8) = 0;
+  virtual ClipStatus writeText(const std::string &utf8) = 0;
+
+protected:
+  ~NativeClipboard() = default;
+};
+inline NativeClipboard *&nativeClipboard() {
+  static NativeClipboard *p = nullptr;
+  return p;
+}
+
+inline bool osImageSupported() {
+  const NativeClipboard *nc = nativeClipboard();
+  return (nc && nc->available()) || !tools().imageCopyCmd.empty();
+}
+
+// Pipes PNG bytes into the tool's stdin. wl-copy / xclip read all of stdin,
+// then fork to keep serving the selection, so pclose returns promptly. A
+// non-zero exit status is reported as Error.
+inline ClipStatus osWritePng(const std::vector<uint8_t> &png) {
+  const Tools &t = tools();
+  if (t.imageCopyCmd.empty())
+    return ClipStatus::Unsupported;
+  SigPipeGuard guard;
+  FILE *pipe = popen((t.imageCopyCmd + " 2>/dev/null").c_str(), "w");
+  if (!pipe)
+    return ClipStatus::Unreachable;
+  bool wrote = std::fwrite(png.data(), 1, png.size(), pipe) == png.size();
+  wrote = (std::fflush(pipe) == 0) && wrote;
+  int status = pclose(pipe);
+  return (wrote && exitedOk(status)) ? ClipStatus::Ok : ClipStatus::Error;
+}
+
+// Reads the clipboard's image/png. The tools exit non-zero when the type is
+// not on offer, which is reported as None; popen failure, an oversized
+// payload, or bytes that don't start with the PNG signature are Errors.
+inline ClipStatus osReadPng(std::vector<uint8_t> &png) {
+  png.clear();
+  const Tools &t = tools();
+  if (t.imagePasteCmd.empty())
+    return ClipStatus::Unsupported;
+  bool tooBig = false;
+  int status = runCapture(t.imagePasteCmd, png, kMaxImageBytes, tooBig);
+  if (status == -1) { // the tool could not be started at all
+    png.clear();
+    return ClipStatus::Unreachable;
+  }
+  if (tooBig) {
+    png.clear();
+    return ClipStatus::Error;
+  }
+  if (!exitedOk(status) || png.empty()) {
+    png.clear();
+    return ClipStatus::None;
+  }
+  if (!hasPngSignature(png)) {
+    png.clear();
+    return ClipStatus::Error;
+  }
+  return ClipStatus::Ok;
+}
+
+// Asks the tool which types the clipboard offers and looks for an exact
+// "image/png" line.
+inline ClipStatus osHasPngTool() {
+  const Tools &t = tools();
+  if (t.imageListCmd.empty())
+    return ClipStatus::Unsupported;
+  std::vector<uint8_t> raw;
+  bool tooBig = false;
+  int status = runCapture(t.imageListCmd, raw, size_t(64) << 10, tooBig);
+  if (status == -1)
+    return ClipStatus::Unreachable;
+  if (tooBig)
+    return ClipStatus::Error;
+  if (!exitedOk(status))
+    return ClipStatus::None; // empty clipboard also lands here
+  const std::string list(raw.begin(), raw.end());
+  size_t pos = 0;
+  while (pos <= list.size()) {
+    size_t end = list.find('\n', pos);
+    if (end == std::string::npos)
+      end = list.size();
+    std::string line = list.substr(pos, end - pos);
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+      line.pop_back();
+    if (line == "image/png")
+      return ClipStatus::Ok;
+    pos = end + 1;
+  }
+  return ClipStatus::None;
+}
+
+// Native first (when the window has focus / a fresh input serial), tools as
+// the fallback. A native answer of "no image" is final: the cached selection
+// is authoritative while focused, so we do not also spawn a tool to ask.
+inline ClipStatus osHasImage() {
+  NativeClipboard *nc = nativeClipboard();
+  if (nc && nc->canRead())
+    return nc->hasPng();
+  return osHasPngTool();
+}
+
+inline ClipStatus osWriteImage(const CanvasImage &img) {
+  NativeClipboard *nc = nativeClipboard();
+  const bool native = nc && nc->canWrite();
+  if (!native && tools().imageCopyCmd.empty())
+    return ClipStatus::Unsupported;
+  std::vector<uint8_t> png;
+  if (!encodeClipboardPng(img, png))
+    return ClipStatus::Error;
+  if (native) {
+    const ClipStatus st = nc->writePng(png);
+    if (st != ClipStatus::Unsupported)
+      return st;
+  }
+  return osWritePng(png); // Unsupported if there is no tool either
+}
+
+inline ClipStatus osReadImage(CanvasImage &out) {
+  out = CanvasImage();
+  std::vector<uint8_t> png;
+  NativeClipboard *nc = nativeClipboard();
+  const ClipStatus st =
+      (nc && nc->canRead()) ? nc->readPng(png) : osReadPng(png);
+  if (st != ClipStatus::Ok)
+    return st;
+  if (auto img = liteui_image::decodeMemory(png.data(), png.size())) {
+    out = std::move(*img);
+    return ClipStatus::Ok;
+  }
+  return ClipStatus::Error; // has the PNG signature but won't decode
+}
+
+} // namespace detail
+
+namespace detail {
+
+// ---- Native Wayland clipboard (wl_data_device) ----------------------------
+// Owned by the window; UI thread only. Uses only core wayland-client, so no
+// extra protocol files are needed.
+//
+// Reading: the compositor announces the current selection as a wl_data_offer
+// (data_offer + offer events, then `selection`). We cache its MIME list, so
+// hasPng() costs nothing, and read it with a pipe: offer.receive(mime, fd).
+// The compositor only sends `selection` to the keyboard-focused client, which
+// is why reading is gated on focus (the caller falls back to the tools).
+//
+// Writing: create a wl_data_source offering image/png and set_selection it
+// with a recent input serial. The source (and the PNG bytes) stay alive until
+// the compositor reports `cancelled`, i.e. someone else took the clipboard.
+// Each `send` request hands us a pipe; the bytes are written WITHOUT blocking
+// the UI thread: as much as fits now, the rest from the window's poll() loop
+// (appendPollFds / servicePolled). No threads.
+//
+// Drag-and-drop IN (files / text dropped on the window) shares this device,
+// because a wl_data_device takes exactly one listener. enter/motion/leave/drop
+// are forwarded to liteui_drop::Hooks; on drop the offer is read through a
+// non-blocking pipe polled from the window's loop (never the UI thread), then
+// parsed (text/uri-list -> paths) and handed to hooks.drop.
+//
+// Limits worth knowing: the protocol gives no reply to set_selection, so a
+// compositor that rejects the serial does so silently. canWrite() therefore
+// requires a serial from an input event in the last few seconds, and
+// otherwise the caller uses the tool path.
+class WlClipboard final : public NativeClipboard {
+  using Clock = std::chrono::steady_clock;
+  static constexpr const char *kPng = "image/png";
+  // How long an input serial is trusted for set_selection.
+  static constexpr std::chrono::seconds kSerialMaxAge{5};
+  // A source that stops sending for this long aborts a read; the whole read
+  // is also capped (see readPng).
+  static constexpr int kReadIdleMs = 3000;
+  static constexpr int kReadTotalMs = 20000;
+
+  // What our own source (the selection we own) carries. The data is opaque
+  // bytes; the kind stops a PNG request being answered with text and back.
+  enum class SrcKind { None, Image, Text };
+  // Offered for text, in this order, all carrying the same UTF-8 bytes (what
+  // wl-copy does). STRING/TEXT are legacy X11 names kept so old clients can
+  // still paste; Xwayland bridges them.
+  static const std::vector<std::string> &textMimes() {
+    static const std::vector<std::string> m = {
+        "text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING",
+        "TEXT"};
+    return m;
+  }
+
+  struct OfferInfo {
+    wl_data_offer *offer = nullptr;
+    std::vector<std::string> mimes;
+    bool dnd = false;  // arrived via drag-and-drop enter, not as the selection
+    bool busy = false; // a drop read is in flight: keep the offer alive
+  };
+  // The drag currently over the window (between enter and leave/drop).
+  struct DndSession {
+    bool active = false;
+    wl_data_offer *offer = nullptr;
+    uint32_t serial = 0;
+    uint32_t action = 0;     // last wl_data_offer.action (copy / none / ...)
+    bool files = false;      // offers text/uri-list
+    bool text = false;       // offers a text type we understand
+    bool latin1 = false;     // the text type is the legacy Latin-1 "STRING"
+    bool accepted = false;   // what we last told the compositor
+    bool sentOnce = false;
+    std::string mime;        // the type we'd read (offer's own spelling)
+    float lastX = 0, lastY = 0; // last pointer position (logical)
+  };
+  // A drop whose data is still arriving.
+  struct DropReader {
+    int fd = -1;
+    wl_data_offer *offer = nullptr;
+    bool files = false;
+    bool latin1 = false;
+    float x = 0, y = 0;
+    std::string buf;
+    Clock::time_point start{}, last{};
+  };
+  // Caps on dropped data (a misbehaving source must not eat memory).
+  static constexpr size_t kMaxDropBytes = 4u << 20;
+  struct Writer {
+    int fd = -1;
+    std::shared_ptr<const std::vector<uint8_t>> data;
+    size_t off = 0;
+  };
+
+public:
+  WlClipboard() = default;
+  WlClipboard(const WlClipboard &) = delete;
+  WlClipboard &operator=(const WlClipboard &) = delete;
+  ~WlClipboard() { shutdown(); }
+
+  // ---- wiring from the window ----
+  void attach(wl_display *d) { display_ = d; }
+  void bindManager(wl_registry *registry, uint32_t name, uint32_t version) {
+    if (mgr_)
+      return;
+    mgr_ = static_cast<wl_data_device_manager *>(wl_registry_bind(
+        registry, name, &wl_data_device_manager_interface,
+        std::min<uint32_t>(version, 3)));
+    createDevice();
+  }
+  void setSeat(wl_seat *seat) {
+    seat_ = seat;
+    createDevice();
+  }
+  // Call with the serial of a key press, button press, touch down, or
+  // keyboard enter: the events set_selection accepts.
+  void noteSerial(uint32_t serial) {
+    serial_ = serial;
+    haveSerial_ = true;
+    serialAt_ = Clock::now();
+  }
+  void setFocused(bool focused) { focused_ = focused; }
+
+  // Where drag-and-drop events go (see liteui_drop::Hooks). Without hooks
+  // every drag is declined, as before.
+  void setDropHooks(liteui_drop::Hooks h) { hooks_ = std::move(h); }
+
+  // Destroys every protocol object. Idempotent; must run before the display
+  // is disconnected.
+  void shutdown() {
+    if (nativeClipboard() == this)
+      nativeClipboard() = nullptr;
+    for (Writer &w : writers_)
+      if (w.fd >= 0)
+        ::close(w.fd);
+    writers_.clear();
+    for (DropReader &r : readers_)
+      if (r.fd >= 0)
+        ::close(r.fd);
+    readers_.clear();
+    dnd_ = {};
+    hooks_ = {};
+    // A selection we still own dies with this process. Hand it to wl-copy /
+    // xclip first so it survives, as tool-made copies always did.
+    if (persistOnExit() && src_ && srcData_ && !srcData_->empty())
+      persist();
+    if (src_) {
+      wl_data_source_destroy(src_);
+      src_ = nullptr;
+    }
+    srcData_.reset();
+    srcKind_ = SrcKind::None;
+    srcMimes_.clear();
+    for (OfferInfo &o : offers_)
+      wl_data_offer_destroy(o.offer);
+    offers_.clear();
+    selOffer_ = nullptr;
+    if (dev_) {
+#ifdef WL_DATA_DEVICE_RELEASE_SINCE_VERSION
+      if (wl_data_device_get_version(dev_) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION)
+        wl_data_device_release(dev_);
+      else
+#endif
+        wl_data_device_destroy(dev_);
+      dev_ = nullptr;
+    }
+    if (mgr_) {
+      wl_data_device_manager_destroy(mgr_);
+      mgr_ = nullptr;
+    }
+    seat_ = nullptr;
+    focused_ = false;
+    haveSerial_ = false;
+  }
+
+  // ---- poll() integration ----
+  // Appends one POLLOUT entry per in-flight write (a clipboard reader's pipe
+  // was full) and one POLLIN entry per in-flight drop read; returns how many.
+  size_t appendPollFds(std::vector<pollfd> &fds) const {
+    for (const Writer &w : writers_)
+      fds.push_back({w.fd, POLLOUT, 0});
+    for (const DropReader &r : readers_)
+      fds.push_back({r.fd, POLLIN, 0});
+    polledWriters_ = writers_.size();
+    polledReaders_ = readers_.size();
+    return polledWriters_ + polledReaders_;
+  }
+  // The poll() timeout to use: milliseconds until the earliest drop-read
+  // deadline, or -1 (wait forever) when no drop is being read.
+  int pollTimeoutMs() const {
+    if (readers_.empty())
+      return -1;
+    const auto now = Clock::now();
+    long best = -1;
+    for (const DropReader &r : readers_) {
+      const auto dl = std::min(r.last + std::chrono::milliseconds(kReadIdleMs),
+                               r.start + std::chrono::milliseconds(kReadTotalMs));
+      const long ms = static_cast<long>(
+          std::max<long long>(0, std::chrono::duration_cast<std::chrono::milliseconds>(dl - now).count()) + 1);
+      if (best < 0 || ms < best)
+        best = ms;
+    }
+    return static_cast<int>(best);
+  }
+  // `fds` points at the entries appendPollFds added (`n` of them). Writes that
+  // started after that call (during this iteration's dispatch) are untouched
+  // and join the next poll set.
+  void servicePolled(const pollfd *fds, size_t n) {
+    const size_t nw = std::min(polledWriters_, n);
+    const size_t nr = std::min(polledReaders_, n - nw);
+    polledWriters_ = polledReaders_ = 0;
+    size_t keep = 0;
+    for (size_t i = 0; i < writers_.size(); ++i) {
+      const bool finished =
+          (i < nw && fds[i].revents != 0) ? pumpWriter(writers_[i]) : false;
+      if (!finished) {
+        if (keep != i)
+          writers_[keep] = std::move(writers_[i]);
+        ++keep;
+      }
+    }
+    writers_.resize(keep);
+    serviceReaders(fds + nw, nr);
+  }
+
+  // ---- NativeClipboard ----
+  bool available() const override { return dev_ != nullptr; }
+  bool canRead() const override { return dev_ && focused_; }
+  bool canWrite() const override {
+    return dev_ && mgr_ && focused_ && haveSerial_ &&
+           Clock::now() - serialAt_ <= kSerialMaxAge;
+  }
+
+  ClipStatus hasPng() override {
+    if (src_) // we own the selection (the echo event may not have arrived yet)
+      return srcKind_ == SrcKind::Image ? ClipStatus::Ok : ClipStatus::None;
+    return (selOffer_ && offerHasPng(selOffer_)) ? ClipStatus::Ok
+                                                 : ClipStatus::None;
+  }
+
+  ClipStatus readPng(std::vector<uint8_t> &png) override {
+    png.clear();
+    // Our own selection: serve it directly. Asking the compositor would make
+    // us wait on ourselves (we are blocked right here).
+    if (src_) {
+      if (srcKind_ != SrcKind::Image || !srcData_)
+        return ClipStatus::None;
+      png = *srcData_;
+      return ClipStatus::Ok;
+    }
+    if (!selOffer_ || !offerHasPng(selOffer_))
+      return ClipStatus::None;
+    const ClipStatus st = receive(kPng, kMaxImageBytes, png);
+    if (st != ClipStatus::Ok)
+      return st;
+    if (!hasPngSignature(png)) {
+      png.clear();
+      return ClipStatus::Error;
+    }
+    return ClipStatus::Ok;
+  }
+
+  ClipStatus writePng(const std::vector<uint8_t> &png) override {
+    if (png.empty())
+      return ClipStatus::Error;
+    return setSelection(SrcKind::Image, {std::string(kPng)},
+                        std::vector<uint8_t>(png));
+  }
+
+  // Preference when reading: UTF-8 named types first, then plain text (taken
+  // as UTF-8, which is what GTK/Qt/wl-copy send), then legacy STRING, which
+  // is Latin-1 by definition and is converted. Anything else (uri-list, html,
+  // ...) is not text for our purposes.
+  ClipStatus readText(std::string &utf8) override {
+    utf8.clear();
+    if (src_) {
+      if (srcKind_ != SrcKind::Text || !srcData_)
+        return ClipStatus::None;
+      utf8.assign(srcData_->begin(), srcData_->end());
+      return ClipStatus::Ok;
+    }
+    if (!selOffer_)
+      return ClipStatus::None;
+    bool latin1 = false;
+    const std::string mime = pickTextMime(selOffer_, latin1);
+    if (mime.empty())
+      return ClipStatus::None;
+    std::vector<uint8_t> bytes;
+    const ClipStatus st = receive(mime, kMaxTextBytes, bytes);
+    if (st != ClipStatus::Ok)
+      return st;
+    if (latin1) {
+      utf8.reserve(bytes.size() + bytes.size() / 4);
+      for (const uint8_t b : bytes) {
+        if (b < 0x80) {
+          utf8.push_back(static_cast<char>(b));
+        } else {
+          utf8.push_back(static_cast<char>(0xC0 | (b >> 6)));
+          utf8.push_back(static_cast<char>(0x80 | (b & 0x3F)));
+        }
+      }
+    } else {
+      utf8.assign(bytes.begin(), bytes.end());
+    }
+    return ClipStatus::Ok;
+  }
+
+  ClipStatus writeText(const std::string &utf8) override {
+    return setSelection(SrcKind::Text, textMimes(),
+                        std::vector<uint8_t>(utf8.begin(), utf8.end()));
+  }
+
+private:
+  void createDevice() {
+    if (dev_ || !mgr_ || !seat_)
+      return;
+    dev_ = wl_data_device_manager_get_data_device(mgr_, seat_);
+    if (!dev_)
+      return;
+    wl_data_device_add_listener(dev_, &deviceListener, this);
+    nativeClipboard() = this;
+  }
+
+  // Becomes the clipboard owner: a fresh source offering `mimes`, all served
+  // from `bytes`. Replaces our previous source; its in-flight writes keep
+  // their own copy of the data.
+  ClipStatus setSelection(SrcKind kind, const std::vector<std::string> &mimes,
+                          std::vector<uint8_t> bytes) {
+    if (!canWrite())
+      return ClipStatus::Unsupported;
+    wl_data_source *ns = wl_data_device_manager_create_data_source(mgr_);
+    if (!ns)
+      return ClipStatus::Error;
+    wl_data_source_add_listener(ns, &sourceListener, this);
+    for (const std::string &m : mimes)
+      wl_data_source_offer(ns, m.c_str());
+    if (src_)
+      wl_data_source_destroy(src_);
+    src_ = ns;
+    srcKind_ = kind;
+    srcMimes_ = mimes;
+    srcData_ = std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
+    wl_data_device_set_selection(dev_, ns, serial_);
+    flush();
+    return ClipStatus::Ok;
+  }
+
+  // Reads `mime` from the current selection offer through a pipe. Ok = bytes
+  // in `out`; None = the source sent nothing; Error = it stalled, the read
+  // failed, or it exceeded `limit`.
+  ClipStatus receive(const std::string &mime, size_t limit,
+                     std::vector<uint8_t> &out) {
+    out.clear();
+    int fds[2];
+    if (pipe2(fds, O_CLOEXEC) != 0)
+      return ClipStatus::Error;
+    wl_data_offer_receive(selOffer_, mime.c_str(), fds[1]);
+    ::close(fds[1]); // the compositor now holds the write end
+    flush();
+
+    const auto deadline =
+        Clock::now() + std::chrono::milliseconds(kReadTotalMs);
+    bool ok = true, tooBig = false;
+    uint8_t buf[65536];
+    for (;;) {
+      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            deadline - Clock::now())
+                            .count();
+      if (left <= 0) {
+        ok = false;
+        break;
+      }
+      pollfd p{fds[0], POLLIN, 0};
+      const int r = ::poll(&p, 1, static_cast<int>(std::min<long>(left, kReadIdleMs)));
+      if (r < 0 && errno == EINTR)
+        continue;
+      if (r <= 0) { // timeout (source stalled) or poll error
+        ok = false;
+        break;
+      }
+      const ssize_t n = ::read(fds[0], buf, sizeof(buf));
+      if (n < 0 && (errno == EINTR || errno == EAGAIN))
+        continue;
+      if (n < 0) {
+        ok = false;
+        break;
+      }
+      if (n == 0) // EOF: the source finished
+        break;
+      if (out.size() + static_cast<size_t>(n) > limit) {
+        tooBig = true;
+        break;
+      }
+      out.insert(out.end(), buf, buf + n);
+    }
+    ::close(fds[0]);
+    if (!ok || tooBig) {
+      out.clear();
+      return ClipStatus::Error;
+    }
+    return out.empty() ? ClipStatus::None : ClipStatus::Ok;
+  }
+
+  // MIME names compare case-insensitively with spaces ignored, so
+  // "text/plain; charset=UTF-8" matches "text/plain;charset=utf-8".
+  static std::string normMime(const std::string &m) {
+    std::string r;
+    for (const char c : m)
+      if (c != ' ')
+        r.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    return r;
+  }
+  // The offer's own spelling of the best text type, or "" if it has none.
+  std::string pickTextMime(wl_data_offer *o, bool &latin1) {
+    latin1 = false;
+    const OfferInfo *info = findOffer(o);
+    if (!info)
+      return {};
+    static const char *const pref[] = {"text/plain;charset=utf-8",
+                                       "utf8_string", "text/plain", "string"};
+    for (const char *p : pref)
+      for (const std::string &m : info->mimes)
+        if (normMime(m) == p) {
+          latin1 = std::strcmp(p, "string") == 0;
+          return m;
+        }
+    return {};
+  }
+
+  // Best-effort: pipe our still-owned selection into wl-copy / xclip, which
+  // fork and keep serving it after we exit. Nothing is lost if none exists.
+  void persist() {
+    const Tools &t = tools();
+    const std::string &cmd =
+        srcKind_ == SrcKind::Text ? t.copyCmd : t.imageCopyCmd;
+    if (cmd.empty() || srcKind_ == SrcKind::None)
+      return;
+    SigPipeGuard guard;
+    FILE *pipe = popen((cmd + " 2>/dev/null").c_str(), "w");
+    if (!pipe)
+      return;
+    std::fwrite(srcData_->data(), 1, srcData_->size(), pipe);
+    pclose(pipe);
+  }
+
+  bool srcOffers(const char *mime) const {
+    for (const std::string &m : srcMimes_)
+      if (m == mime)
+        return true;
+    return false;
+  }
+
+  // Sends our queued requests. A full socket (EAGAIN) is waited out briefly.
+  void flush() {
+    if (!display_)
+      return;
+    for (int tries = 0; tries < 50; ++tries) {
+      if (wl_display_flush(display_) != -1 || errno != EAGAIN)
+        return;
+      pollfd p{wl_display_get_fd(display_), POLLOUT, 0};
+      ::poll(&p, 1, 100);
+    }
+  }
+
+  OfferInfo *findOffer(wl_data_offer *o) {
+    for (OfferInfo &i : offers_)
+      if (i.offer == o)
+        return &i;
+    return nullptr;
+  }
+  bool offerHasPng(wl_data_offer *o) {
+    const OfferInfo *i = findOffer(o);
+    if (!i)
+      return false;
+    for (const std::string &m : i->mimes)
+      if (m == kPng)
+        return true;
+    return false;
+  }
+  void dropOffer(wl_data_offer *o) {
+    for (size_t i = 0; i < offers_.size(); ++i)
+      if (offers_[i].offer == o) {
+        wl_data_offer_destroy(o);
+        offers_.erase(offers_.begin() + static_cast<std::ptrdiff_t>(i));
+        break;
+      }
+    if (selOffer_ == o)
+      selOffer_ = nullptr;
+  }
+  // The protocol hands us an offer object per drag, which we must destroy
+  // (except one a drop read still uses: that goes when the read ends).
+  void dropDndOffers() {
+    for (size_t i = 0; i < offers_.size();) {
+      if (offers_[i].dnd && !offers_[i].busy) {
+        wl_data_offer_destroy(offers_[i].offer);
+        offers_.erase(offers_.begin() + static_cast<std::ptrdiff_t>(i));
+      } else {
+        ++i;
+      }
+    }
+  }
+
+  // Writes as much as the pipe takes right now. True when finished (done, or
+  // the reader went away); the fd is closed in that case.
+  bool pumpWriter(Writer &w) {
+    SigPipeGuard guard; // a reader that closed early must not kill the app
+    while (w.off < w.data->size()) {
+      const size_t chunk = std::min<size_t>(w.data->size() - w.off, 65536);
+      const ssize_t k = ::write(w.fd, w.data->data() + w.off, chunk);
+      if (k > 0) {
+        w.off += static_cast<size_t>(k);
+        continue;
+      }
+      if (k < 0 && errno == EINTR)
+        continue;
+      if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false; // pipe full: resume when poll() says POLLOUT
+      break;          // EPIPE or another error: the reader is gone
+    }
+    ::close(w.fd);
+    w.fd = -1;
+    return true;
+  }
+
+  // ---- drag-and-drop in ----
+  static bool hasMimeNoCase(const OfferInfo &i, const char *want,
+                            std::string *spelling = nullptr) {
+    for (const std::string &m : i.mimes)
+      if (normMime(m) == want) {
+        if (spelling)
+          *spelling = m;
+        return true;
+      }
+    return false;
+  }
+  // Tells the compositor whether we'd take a drop here (only on change).
+  // accept() names the type we want; set_actions (v3) offers "copy" only —
+  // we never move or delete the source.
+  void applyAccept(bool ok) {
+    DndSession &d = dnd_;
+    if (!d.active || !d.offer)
+      return;
+    const bool want = ok && (d.files || d.text);
+    if (d.sentOnce && want == d.accepted)
+      return;
+    d.sentOnce = true;
+    d.accepted = want;
+    wl_data_offer_accept(d.offer, d.serial, want ? d.mime.c_str() : nullptr);
+    if (wl_data_offer_get_version(d.offer) >= 3) {
+      const uint32_t a = want ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+                              : WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+      wl_data_offer_set_actions(d.offer, a, a);
+    }
+    if (display_)
+      wl_display_flush(display_);
+  }
+  // Reads the dropped data from the poll() loop.
+  void startDropRead(float x, float y) {
+    DndSession d = dnd_;
+    dnd_ = {};
+    int fds[2];
+    if (::pipe2(fds, O_CLOEXEC) != 0) {
+      failDrop(d.offer);
+      return;
+    }
+    const int fl = fcntl(fds[0], F_GETFL);
+    if (fl >= 0)
+      fcntl(fds[0], F_SETFL, fl | O_NONBLOCK); // only OUR end
+    if (OfferInfo *i = findOffer(d.offer))
+      i->busy = true;
+    wl_data_offer_receive(d.offer, d.mime.c_str(), fds[1]);
+    ::close(fds[1]);
+    if (display_)
+      wl_display_flush(display_);
+    DropReader r;
+    r.fd = fds[0];
+    r.offer = d.offer;
+    r.files = d.files;
+    r.latin1 = d.latin1 && !d.files;
+    r.x = x;
+    r.y = y;
+    r.start = r.last = Clock::now();
+    readers_.push_back(std::move(r));
+  }
+  // A drop that cannot complete: release the offer, clear the highlight.
+  void failDrop(wl_data_offer *o) {
+    if (OfferInfo *i = findOffer(o))
+      i->busy = false;
+    dropOffer(o);
+    if (hooks_.leave)
+      hooks_.leave();
+  }
+  enum class ReadState { Pending, Done, Failed };
+  ReadState pumpReader(DropReader &r) {
+    char tmp[4096];
+    for (;;) {
+      const ssize_t k = ::read(r.fd, tmp, sizeof tmp);
+      if (k > 0) {
+        r.buf.append(tmp, static_cast<size_t>(k));
+        r.last = Clock::now();
+        if (r.buf.size() > kMaxDropBytes)
+          return ReadState::Failed;
+        continue;
+      }
+      if (k == 0)
+        return ReadState::Done;
+      if (errno == EINTR)
+        continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK)
+        return ReadState::Pending;
+      return ReadState::Failed;
+    }
+  }
+  void serviceReaders(const pollfd *fds, size_t n) {
+    if (readers_.empty())
+      return;
+    const auto now = Clock::now();
+    std::vector<DropReader> done, failed;
+    size_t keep = 0;
+    for (size_t i = 0; i < readers_.size(); ++i) {
+      DropReader &r = readers_[i];
+      ReadState st = ReadState::Pending;
+      if (i < n && fds[i].revents != 0)
+        st = pumpReader(r);
+      if (st == ReadState::Pending &&
+          (now - r.last > std::chrono::milliseconds(kReadIdleMs) ||
+           now - r.start > std::chrono::milliseconds(kReadTotalMs)))
+        st = ReadState::Failed;
+      if (st == ReadState::Pending) {
+        if (keep != i)
+          readers_[keep] = std::move(readers_[i]);
+        ++keep;
+      } else if (st == ReadState::Done) {
+        done.push_back(std::move(r));
+      } else {
+        failed.push_back(std::move(r));
+      }
+    }
+    readers_.resize(keep);
+    // Callbacks run app code: only after readers_ is consistent again.
+    for (DropReader &r : failed) {
+      ::close(r.fd);
+      failDrop(r.offer);
+    }
+    for (DropReader &r : done)
+      completeDrop(r);
+  }
+  void completeDrop(DropReader &r) {
+    ::close(r.fd);
+    r.fd = -1;
+    std::vector<std::string> paths;
+    std::string text;
+    if (r.files) {
+      std::vector<std::string> other;
+      paths = liteui_drop::parseUriList(r.buf, &other);
+      if (paths.empty() && !other.empty()) {
+        for (size_t i = 0; i < other.size(); ++i)
+          text += (i ? "\n" : "") + other[i];
+      }
+    } else {
+      text = r.latin1 ? liteui_drop::latin1ToUtf8(r.buf) : std::move(r.buf);
+      while (!text.empty() && text.back() == '\0')
+        text.pop_back();
+    }
+    // Tell the source we are done (v3, and only valid after a negotiated
+    // action — guaranteed here: we only read after checking it), then free it.
+    if (OfferInfo *i = findOffer(r.offer))
+      i->busy = false;
+    if (wl_data_offer_get_version(r.offer) >= 3)
+      wl_data_offer_finish(r.offer);
+    dropOffer(r.offer);
+    if (display_)
+      wl_display_flush(display_);
+    if (paths.empty() && text.empty()) {
+      if (hooks_.leave)
+        hooks_.leave();
+      return;
+    }
+    if (hooks_.drop)
+      hooks_.drop(r.x, r.y, std::move(paths), std::move(text));
+  }
+
+  // ---- wl_data_device events ----
+  static void devDataOffer(void *d, wl_data_device *, wl_data_offer *o) {
+    auto *self = static_cast<WlClipboard *>(d);
+    OfferInfo info;
+    info.offer = o;
+    self->offers_.push_back(std::move(info));
+    wl_data_offer_add_listener(o, &offerListener, self);
+  }
+  static void devEnter(void *d, wl_data_device *, uint32_t serial,
+                       wl_surface *, wl_fixed_t fx, wl_fixed_t fy,
+                       wl_data_offer *o) {
+    auto *self = static_cast<WlClipboard *>(d);
+    if (!o)
+      return;
+    OfferInfo *i = self->findOffer(o);
+    if (!i)
+      return;
+    i->dnd = true;
+    // A drag we never saw end (a compositor that skipped `leave`).
+    if (self->dnd_.active && self->dnd_.offer != o) {
+      self->dnd_ = {};
+      self->dropDndOffers();
+      i = self->findOffer(o);
+      if (!i)
+        return;
+    }
+    DndSession &s = self->dnd_;
+    s = {};
+    s.active = true;
+    s.offer = o;
+    s.serial = serial;
+    s.files = hasMimeNoCase(*i, "text/uri-list", &s.mime);
+    if (!s.files) {
+      bool latin1 = false;
+      s.mime = self->pickTextMime(o, latin1);
+      s.latin1 = latin1;
+    }
+    s.text = !s.files && !s.mime.empty();
+    s.lastX = static_cast<float>(wl_fixed_to_double(fx));
+    s.lastY = static_cast<float>(wl_fixed_to_double(fy));
+    bool ok = false;
+    if (self->hooks_.enter)
+      ok = self->hooks_.enter(static_cast<float>(wl_fixed_to_double(fx)),
+                              static_cast<float>(wl_fixed_to_double(fy)),
+                              s.files, s.text);
+    self->applyAccept(ok);
+  }
+  static void devLeave(void *d, wl_data_device *) {
+    auto *self = static_cast<WlClipboard *>(d);
+    const bool wasActive = self->dnd_.active;
+    self->dnd_ = {};
+    if (wasActive && self->hooks_.leave)
+      self->hooks_.leave();
+    self->dropDndOffers(); // a read in flight keeps its offer (busy)
+  }
+  static void devMotion(void *d, wl_data_device *, uint32_t, wl_fixed_t fx,
+                        wl_fixed_t fy) {
+    auto *self = static_cast<WlClipboard *>(d);
+    if (!self->dnd_.active)
+      return;
+    bool ok = false;
+    if (self->hooks_.over)
+      ok = self->hooks_.over(static_cast<float>(wl_fixed_to_double(fx)),
+                             static_cast<float>(wl_fixed_to_double(fy)));
+    self->applyAccept(ok);
+    self->dnd_.lastX = static_cast<float>(wl_fixed_to_double(fx));
+    self->dnd_.lastY = static_cast<float>(wl_fixed_to_double(fy));
+  }
+  static void devDrop(void *d, wl_data_device *) {
+    auto *self = static_cast<WlClipboard *>(d);
+    DndSession &s = self->dnd_;
+    if (!s.active || !s.offer) {
+      self->dropDndOffers();
+      return;
+    }
+    // finish() is a protocol ERROR unless an action was negotiated, so only
+    // go on when the compositor confirmed one (v3) and we accepted.
+    const bool v3 = wl_data_offer_get_version(s.offer) >= 3;
+    const bool actionOk =
+        !v3 || s.action == WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+    if (!s.accepted || !actionOk || (!s.files && !s.text)) {
+      self->dnd_ = {};
+      if (self->hooks_.leave)
+        self->hooks_.leave();
+      self->dropDndOffers();
+      return;
+    }
+    self->startDropRead(s.lastX, s.lastY);
+  }
+  static void devSelection(void *d, wl_data_device *, wl_data_offer *o) {
+    auto *self = static_cast<WlClipboard *>(d);
+    wl_data_offer *old = self->selOffer_;
+    self->selOffer_ = o; // may be null: the clipboard was cleared
+    if (old && old != o)
+      self->dropOffer(old);
+  }
+  static constexpr wl_data_device_listener deviceListener = {
+      devDataOffer, devEnter, devLeave, devMotion, devDrop, devSelection};
+
+  // ---- wl_data_offer events ----
+  static void offerMime(void *d, wl_data_offer *o, const char *mime) {
+    auto *self = static_cast<WlClipboard *>(d);
+    if (OfferInfo *i = self->findOffer(o))
+      i->mimes.emplace_back(mime);
+  }
+  static void offerSourceActions(void *, wl_data_offer *, uint32_t) {}
+  static void offerAction(void *d, wl_data_offer *o, uint32_t action) {
+    auto *self = static_cast<WlClipboard *>(d);
+    if (self->dnd_.active && self->dnd_.offer == o)
+      self->dnd_.action = action;
+  }
+  static constexpr wl_data_offer_listener offerListener = {
+      offerMime, offerSourceActions, offerAction};
+
+  // ---- wl_data_source events (our own selection) ----
+  static void srcTarget(void *, wl_data_source *, const char *) {}
+  static void srcSend(void *d, wl_data_source *s, const char *mime,
+                      int32_t fd) {
+    auto *self = static_cast<WlClipboard *>(d);
+    if (s != self->src_ || !self->srcData_ || !self->srcOffers(mime)) {
+      ::close(fd);
+      return;
+    }
+    const int fl = fcntl(fd, F_GETFL);
+    if (fl >= 0)
+      fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    fcntl(fd, F_SETFD, FD_CLOEXEC);
+    Writer w;
+    w.fd = fd;
+    w.data = self->srcData_;
+    if (!self->pumpWriter(w)) // pipe full: finish from the poll() loop
+      self->writers_.push_back(std::move(w));
+  }
+  static void srcCancelled(void *d, wl_data_source *s) {
+    auto *self = static_cast<WlClipboard *>(d);
+    if (s == self->src_) {
+      self->src_ = nullptr;
+      self->srcData_.reset(); // in-flight writes still hold their own copy
+      self->srcKind_ = SrcKind::None;
+      self->srcMimes_.clear();
+    }
+    wl_data_source_destroy(s);
+  }
+  static void srcDndDropPerformed(void *, wl_data_source *) {}
+  static void srcDndFinished(void *, wl_data_source *) {}
+  static void srcAction(void *, wl_data_source *, uint32_t) {}
+  static constexpr wl_data_source_listener sourceListener = {
+      srcTarget,         srcSend,        srcCancelled,
+      srcDndDropPerformed, srcDndFinished, srcAction};
+
+  wl_display *display_ = nullptr;
+  wl_data_device_manager *mgr_ = nullptr;
+  wl_seat *seat_ = nullptr;
+  wl_data_device *dev_ = nullptr;
+  wl_data_offer *selOffer_ = nullptr; // current selection from the compositor
+  std::vector<OfferInfo> offers_;
+  wl_data_source *src_ = nullptr; // our selection, if we own it
+  std::shared_ptr<const std::vector<uint8_t>> srcData_;
+  SrcKind srcKind_ = SrcKind::None;
+  std::vector<std::string> srcMimes_; // types our source offers
+  std::vector<Writer> writers_;
+  std::vector<DropReader> readers_;
+  DndSession dnd_;
+  liteui_drop::Hooks hooks_;
+  mutable size_t polledWriters_ = 0, polledReaders_ = 0;
+  uint32_t serial_ = 0;
+  bool haveSerial_ = false;
+  bool focused_ = false;
+  Clock::time_point serialAt_{};
+};
 } // namespace detail
 
 // Returns false if no clipboard tool is available or it couldn't be run.
 bool setText(const std::string &utf8) {
+  // Native Wayland clipboard first (focused + recent input event); the tools
+  // below are the fallback. See WlClipboard for the trade-offs.
+  if (detail::NativeClipboard *nc = detail::nativeClipboard();
+      nc && nc->canWrite() &&
+      nc->writeText(utf8) == detail::ClipStatus::Ok)
+    return true;
   const auto &t = detail::tools();
   if (t.copyCmd.empty())
     return false;
@@ -3668,6 +5573,14 @@ bool setText(const std::string &utf8) {
 // nullopt  = no usable clipboard tool (caller may use the fallback)
 // ""       = tool ran fine but the clipboard has no text (e.g. an image)
 std::optional<std::string> getText() {
+  // Native first. While focused the compositor's cached selection is
+  // authoritative, so its answer is final: no text (or an unreadable source)
+  // is "", not a reason to spawn a tool or use the fallback.
+  if (detail::NativeClipboard *nc = detail::nativeClipboard();
+      nc && nc->canRead()) {
+    std::string text;
+    return nc->readText(text) == detail::ClipStatus::Ok ? text : std::string();
+  }
   const auto &t = detail::tools();
   if (t.pasteCmd.empty())
     return std::nullopt;
@@ -3685,14 +5598,33 @@ std::optional<std::string> getText() {
 
 #endif
 
+// ---- Image clipboard (platform-independent half) -----------------------
+bool imageSupported() { return detail::osImageSupported(); }
+
+bool hasImage() { return detail::osHasImage() == detail::ClipStatus::Ok; }
+
+bool setImage(const CanvasImage &image) {
+  return detail::osWriteImage(image) == detail::ClipStatus::Ok;
+}
+
+std::optional<CanvasImage> getImage() {
+  CanvasImage img;
+  if (detail::osReadImage(img) != detail::ClipStatus::Ok)
+    return std::nullopt;
+  return img;
+}
+
 // What CodeEditor actually calls.
 //
 // Set:  always mirrors into the in-process fallback, then tries the OS.
 // Get:  if the OS clipboard is reachable, its answer is final, even when
 //       that answer is "empty". The fallback is used only when there is
 //       no OS clipboard to ask. Line endings are normalized to '\n'.
+void setPersistOnExit(bool enable) { detail::persistOnExit() = enable; }
+
 void setTextWithFallback(const std::string &s) {
   internalFallback() = s;
+  internalImageFallback().reset(); // most recent copy wins: text replaces an image
   setText(s);
 }
 
@@ -3701,6 +5633,42 @@ std::string getTextWithFallback() {
     return toLF(*os);
   return internalFallback();
 }
+
+// ---- Image clipboard with in-process fallback ---------------------------
+bool setImageWithFallback(const CanvasImage &image) {
+  if (!detail::validCanvasImage(image))
+    return false;
+  internalImageFallback() = image;
+  internalFallback().clear(); // most recent copy wins: an image replaces text
+  return setImage(image);
+}
+
+bool hasImageWithFallback() {
+  switch (detail::osHasImage()) {
+  case detail::ClipStatus::Ok:
+    return true;
+  case detail::ClipStatus::Unsupported:
+  case detail::ClipStatus::Unreachable:
+    return internalImageFallback().has_value(); // the OS could not be asked
+  default:
+    return false; // the OS answered: no image
+  }
+}
+
+std::optional<CanvasImage> getImageWithFallback() {
+  CanvasImage img;
+  switch (detail::osReadImage(img)) {
+  case detail::ClipStatus::Ok:
+    return img;
+  case detail::ClipStatus::Unsupported:
+  case detail::ClipStatus::Unreachable:
+    return internalImageFallback(); // the OS could not be asked
+  default:
+    return std::nullopt; // the OS answered: no (readable) image
+  }
+}
+
+void clearImageFallback() { internalImageFallback().reset(); }
 
 } // namespace liteui_clipboard
 
@@ -6826,6 +8794,10 @@ View View::toView(Canvas c) {
   v.onPointerEnter = std::move(c.onPointerEnter);
   v.onPointerLeave = std::move(c.onPointerLeave);
   v.onWheel = std::move(c.onWheel);
+  v.onDrop = std::move(c.onDrop);
+  v.onDragEnter = std::move(c.onDragEnter);
+  v.onDragOver = std::move(c.onDragOver);
+  v.onDragLeave = std::move(c.onDragLeave);
   v.canvasDirtySource = std::move(c.canvasDirtySource);
   v.canvasRetained = c.retained;
   v.canvasDamage = std::move(c.damage);
@@ -13064,6 +15036,21 @@ public:
     return updateHover(*root, e, ClipRect{}, needPoll);
   }
 
+  // The deepest enabled view under window (x, y) that has an onDrop handler,
+  // or null. Dropping is not a pointer press, so this never touches pointer
+  // state.
+  View *dropTargetAt(float x, float y) {
+    if (!root)
+      return nullptr;
+    Scratch chain(*this);
+    chainAt(x, y,
+            [](const View &v) { return (bool)v.onDrop && !isDisabled(v); },
+            chain.v);
+    return chain.v.empty() ? nullptr : chain.v.front();
+  }
+  // Bumped by invalidate(): a raw View* saved before a bump may be dangling.
+  uint64_t generation() const { return generation_; }
+
 private:
   struct ClickRecord {
     View *target = nullptr;
@@ -13405,6 +15392,155 @@ private:
 };
 
 } // namespace liteui_pointer
+
+// ==================== File / text drop: dispatch ====================
+namespace liteui_drop {
+
+// Turns a platform's enter/over/leave/drop calls (Hooks) into the View
+// handlers of the tree behind `router`: picks the deepest enabled onDrop view,
+// fires onDragEnter / onDragOver / onDragLeave as the target changes, and
+// falls back to `windowHandler`. Kept apart from LiteUIImpl so it can be
+// driven without a window.
+class Dispatcher {
+public:
+  explicit Dispatcher(liteui_pointer::Router &r) : router_(r) {}
+
+  std::function<void(DropEvent &)> windowHandler;
+  std::function<KeyModifiers()> modifiers; // optional
+  // Runs after any app handler ran (apply Dynamic<> changes, repaint).
+  std::function<void()> afterHandlers;
+
+  Hooks hooks() {
+    Hooks h;
+    h.enter = [this](float x, float y, bool f, bool t) {
+      return enter(x, y, f, t);
+    };
+    h.over = [this](float x, float y) { return over(x, y); };
+    h.leave = [this] { leave(); };
+    h.drop = [this](float x, float y, std::vector<std::string> p,
+                    std::string t) { return drop(x, y, std::move(p), std::move(t)); };
+    return h;
+  }
+
+  // enter/over return whether a drop at (x, y) would be accepted.
+  bool enter(float x, float y, bool files, bool text) {
+    files_ = files;
+    text_ = text;
+    return move(x, y);
+  }
+  bool over(float x, float y) { return move(x, y); }
+  void leave() {
+    bool ran = false;
+    View *t = target_;
+    target_ = nullptr;
+    if (t && gen_ == router_.generation() && t->onDragLeave) {
+      fire(*t, t->onDragLeave, lastX_, lastY_);
+      ran = true;
+    }
+    if (ran)
+      after();
+  }
+  // The drop itself. False when nothing took it.
+  bool drop(float x, float y, std::vector<std::string> paths, std::string text) {
+    leave(); // clears any highlight first
+    View *t = router_.dropTargetAt(x, y);
+    DropEvent e;
+    e.windowX = e.x = x;
+    e.windowY = e.y = y;
+    e.hasFiles = !paths.empty();
+    e.hasText = !text.empty();
+    e.paths = std::move(paths);
+    e.text = std::move(text);
+    if (modifiers)
+      e.mods = modifiers();
+    bool handled = false;
+    if (t) {
+      e.x = x - t->computed.x;
+      e.y = y - t->computed.y;
+      t->onDrop(e);
+      handled = true;
+    } else if (windowHandler) {
+      windowHandler(e);
+      handled = true;
+    }
+    if (handled)
+      after();
+    return handled;
+  }
+  // The view tree was rebuilt: forget the target without calling it.
+  void forget() { target_ = nullptr; }
+  View *target() const { return target_; }
+
+private:
+  bool move(float x, float y) {
+    lastX_ = x;
+    lastY_ = y;
+    View *t = router_.dropTargetAt(x, y);
+    uint64_t gen = router_.generation();
+    bool ran = false;
+    if (gen_ != gen)
+      target_ = nullptr; // tree rebuilt: the old pointer may dangle
+    if (t != target_) {
+      View *old = target_;
+      target_ = nullptr;
+      if (old && old->onDragLeave) {
+        fire(*old, old->onDragLeave, x, y);
+        ran = true;
+        if (router_.generation() != gen) { // the handler rebuilt the tree
+          gen = router_.generation();
+          t = router_.dropTargetAt(x, y);
+        }
+      }
+      target_ = t;
+      gen_ = gen;
+      if (t && t->onDragEnter) {
+        fire(*t, t->onDragEnter, x, y);
+        ran = true;
+        if (router_.generation() != gen) {
+          gen = router_.generation();
+          t = router_.dropTargetAt(x, y);
+          target_ = t;
+          gen_ = gen;
+        }
+      }
+    }
+    if (t && t->onDragOver) {
+      fire(*t, t->onDragOver, x, y);
+      ran = true;
+      if (router_.generation() != gen) {
+        target_ = nullptr; // re-resolved by the next motion
+        t = router_.dropTargetAt(x, y);
+      }
+    }
+    if (ran)
+      after();
+    return t != nullptr || (bool)windowHandler;
+  }
+  void fire(View &v, const DropHandler &h, float x, float y) {
+    DropEvent e;
+    e.windowX = x;
+    e.windowY = y;
+    e.x = x - v.computed.x;
+    e.y = y - v.computed.y;
+    e.hasFiles = files_;
+    e.hasText = text_;
+    if (modifiers)
+      e.mods = modifiers();
+    h(e);
+  }
+  void after() {
+    if (afterHandlers)
+      afterHandlers();
+  }
+
+  liteui_pointer::Router &router_;
+  View *target_ = nullptr; // valid only while gen_ matches the router's
+  uint64_t gen_ = 0;
+  bool files_ = false, text_ = false;
+  float lastX_ = 0, lastY_ = 0;
+};
+
+} // namespace liteui_drop
 
 // ---------------------------------------------------------------------------
 // liteui_wheel — turns raw scroll input into WheelEvent deltas, with no
@@ -14486,6 +16622,7 @@ private:
   // silently for the same reason: no onPointerCancel here.
   void invalidateViewPointers() {
     ptrRouter_.invalidate(); // press and capture targets, silently
+    dropDisp_.forget();
     scrollDrag_ = {};
     focusedView_ = nullptr;
     hideTooltip(); // clears tooltipTarget_ and cancels its timer
@@ -14683,7 +16820,88 @@ public:
     scaleChanged_ = std::move(fn);
   }
 
+  // ---- File / text drop (see DropEvent) ----
+  void setFileDropHandler(std::function<void(DropEvent &)> fn) {
+    dropDisp_.windowHandler = std::move(fn);
+  }
+  // The bridge a platform backend calls into (logical coordinates).
+  liteui_drop::Hooks makeDropHooks() {
+    dropDisp_.modifiers = [this] { return modifiers(); };
+    dropDisp_.afterHandlers = [this] { finishDropDispatch(); };
+    return dropDisp_.hooks();
+  }
+
 private:
+  // A handler may have changed app state a Dynamic<> reads: apply it, repaint.
+  void finishDropDispatch() {
+    pollAndRelayout();
+#if defined(_WIN32)
+    if (hwnd_)
+      InvalidateRect(hwnd_, nullptr, FALSE);
+#else
+    redraw();
+#endif
+  }
+
+#if defined(_WIN32)
+  // Registers the window as a drop target. OLE gives enter/over/leave and the
+  // right drop effect; it needs OleInitialize (a single-threaded apartment)
+  // on this thread. If that is impossible — the host already initialised COM
+  // as a multithreaded apartment here — fall back to WM_DROPFILES.
+  void setupFileDrop() {
+    if (SUCCEEDED(OleInitialize(nullptr))) {
+      oleInited_ = true;
+      auto *t = new liteui_drop::OleDropTarget(
+          makeDropHooks(), [this](POINTL p, float &x, float &y) {
+            POINT pt{p.x, p.y};
+            ScreenToClient(hwnd_, &pt);
+            x = toLogical(static_cast<float>(pt.x));
+            y = toLogical(static_cast<float>(pt.y));
+          });
+      if (SUCCEEDED(RegisterDragDrop(hwnd_, t))) {
+        oleDrop_ = t; // RegisterDragDrop holds its own reference too
+        return;
+      }
+      t->Release();
+    }
+    DragAcceptFiles(hwnd_, TRUE);
+    legacyDrop_ = true;
+    // An elevated process only receives these messages from a lower-integrity
+    // sender (Explorer) once allowed. (This does not help the OLE path.)
+    using FilterFn = BOOL(WINAPI *)(HWND, UINT, DWORD, void *);
+    if (HMODULE u = GetModuleHandleW(L"user32.dll")) {
+      auto *fn = reinterpret_cast<FilterFn>(
+          reinterpret_cast<void *>(GetProcAddress(u, "ChangeWindowMessageFilterEx")));
+      if (fn)
+        for (const UINT m : {static_cast<UINT>(WM_DROPFILES),
+                             static_cast<UINT>(WM_COPYDATA), 0x0049u})
+          fn(hwnd_, m, 1 /* MSGFLT_ALLOW */, nullptr);
+    }
+  }
+  // Idempotent; runs on WM_DESTROY and again from the destructor.
+  void teardownFileDrop() {
+    if (hwnd_ && oleDrop_)
+      RevokeDragDrop(hwnd_);
+    if (oleDrop_) {
+      oleDrop_->Release();
+      oleDrop_ = nullptr;
+    }
+    if (hwnd_ && legacyDrop_)
+      DragAcceptFiles(hwnd_, FALSE);
+    legacyDrop_ = false;
+    if (oleInited_) {
+      OleUninitialize();
+      oleInited_ = false;
+    }
+  }
+  liteui_drop::OleDropTarget *oleDrop_ = nullptr;
+  bool oleInited_ = false;
+  bool legacyDrop_ = false;
+#endif
+
+  liteui_drop::Dispatcher dropDisp_{ptrRouter_};
+
+
   // Called by both platform backends on every key press. Checks
   // shortcuts_ first (global, focus-independent), then falls through to
   // focusedView_->onKeyDown if nothing claimed it. Polls dynamic sources
@@ -15916,8 +18134,37 @@ private:
       if (self)
         self->handleCloseRequested();
       return 0;
+    // Files dropped on the window — only arrives when the OLE drop target
+    // could not be registered (see setupFileDrop); DragAcceptFiles is the
+    // fallback, with no hover feedback.
+    case WM_DROPFILES: {
+      HDROP drop = reinterpret_cast<HDROP>(wp);
+      if (self) {
+        POINT pt{};
+        DragQueryPoint(drop, &pt); // client coordinates, physical pixels
+        std::vector<std::string> paths;
+        const UINT count = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
+        for (UINT i = 0; i < count; ++i) {
+          const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+          std::wstring w(len, L'\0');
+          if (len && DragQueryFileW(drop, i, w.data(), len + 1) == len)
+            paths.push_back(liteui_drop::utf16ToUtf8(
+                reinterpret_cast<const char16_t *>(w.data()), w.size()));
+        }
+        DragFinish(drop);
+        if (!paths.empty())
+          self->dropDisp_.drop(self->toLogical(static_cast<float>(pt.x)),
+                               self->toLogical(static_cast<float>(pt.y)),
+                               std::move(paths), {});
+      } else {
+        DragFinish(drop);
+      }
+      return 0;
+    }
     // When the window is being destroyed...
     case WM_DESTROY:
+      if (self)
+        self->teardownFileDrop();
       // ...tell Windows to post a WM_QUIT message, which ends the GetMessage
       // loop in run().
       PostQuitMessage(0);
@@ -16836,7 +19083,7 @@ private:
   // event.
   static constexpr xdg_wm_base_listener wmBaseListener = {wmBasePing};
 
-  // Called when the compositor wants us to (re)configure our xdg_surface.
+// Called when the compositor wants us to (re)configure our xdg_surface.
   static void surfaceConfigure(void *data, xdg_surface *xs, uint32_t serial) {
     // Recover the LiteUI instance this callback belongs to.
     auto *self = static_cast<LiteUIImpl *>(data);
@@ -16852,7 +19099,8 @@ private:
         (self->pendingWidth_ != self->width_ ||
          self->pendingHeight_ != self->height_)) {
       self->resize(self->pendingWidth_, self->pendingHeight_);
-    } else if (!self->eglReady_)
+    }
+    if (!self->eglReady_)
       self->initEgl();
   }
   // Listener struct binding surfaceConfigure to xdg_surface's single event.
@@ -16956,6 +19204,8 @@ private:
   bool penTouchPending_ = false;
 
   zwp_tablet_manager_v2 *tabletManager_ = nullptr;
+  // Native clipboard (wl_data_device): see liteui_clipboard::detail::WlClipboard.
+  liteui_clipboard::detail::WlClipboard wlClip_;
   zwp_tablet_seat_v2 *tabletSeat_ = nullptr;
   wl_touch *touch_ = nullptr;
   wl_surface *toolCursorSurface_ = nullptr; // a tablet tool's cursor needs its
@@ -17031,10 +19281,11 @@ private:
   }
 
   // -- wl_touch --
-  static void touchDown(void *data, wl_touch *, uint32_t, uint32_t time,
+  static void touchDown(void *data, wl_touch *, uint32_t serial, uint32_t time,
                         wl_surface *, int32_t wlId, wl_fixed_t sx,
                         wl_fixed_t sy) {
     auto *self = static_cast<LiteUIImpl *>(data);
+    self->wlClip_.noteSerial(serial);
     TouchPoint p;
     p.wlId = wlId;
     p.id = self->nextTouchId_++;
@@ -17502,6 +19753,8 @@ private:
                             uint32_t button, uint32_t state) {
     // Recover the owning LiteUI.
     auto *self = static_cast<LiteUIImpl *>(data);
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+      self->wlClip_.noteSerial(serial); // any press can authorise a copy
     // Bring any drag up to the final pointer position first, so a release
     // that arrives in the same batch as the last few motion events ends the
     // drag where the user actually let go.
@@ -17571,21 +19824,31 @@ private:
         self->xkbKeymap_ ? xkb_state_new(self->xkbKeymap_) : nullptr;
   }
 
-  static void keyboardEnter(void *, wl_keyboard *, uint32_t, wl_surface *,
-                            wl_array *) {}
+  // Keyboard focus arrived: the compositor now sends us clipboard
+  // (`selection`) events, and this serial is valid for set_selection.
+  static void keyboardEnter(void *data, wl_keyboard *, uint32_t serial,
+                            wl_surface *, wl_array *) {
+    auto *self = static_cast<LiteUIImpl *>(data);
+    self->wlClip_.noteSerial(serial);
+    self->wlClip_.setFocused(true);
+  }
 
   // Keyboard focus left our surface entirely (switched to another window)
   // — blur, and stop any in-flight repeat, same reasoning as WM_KILLFOCUS.
   static void keyboardLeave(void *data, wl_keyboard *, uint32_t, wl_surface *) {
     auto *self = static_cast<LiteUIImpl *>(data);
+    self->wlClip_.setFocused(false);
     self->setFocus(nullptr);
     self->repeatKeycode_ = 0;
     self->hideTooltip();
   }
 
-  static void keyboardKey(void *data, wl_keyboard *, uint32_t, uint32_t,
+  static void keyboardKey(void *data, wl_keyboard *, uint32_t serial, uint32_t,
                           uint32_t key, uint32_t state) {
     auto *self = static_cast<LiteUIImpl *>(data);
+    // A key press (e.g. Ctrl+C) is what authorises a clipboard write.
+    if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
+      self->wlClip_.noteSerial(serial);
     if (!self->xkbState_)
       return;
     // Wayland keycodes are evdev-based, offset by 8 from the X11/xkb
@@ -17731,6 +19994,11 @@ private:
       // pointer.
       wl_seat_add_listener(self->seat_, &seatListener, self);
       self->maybeCreateTabletSeat();
+      self->wlClip_.setSeat(self->seat_);
+    }
+    // If instead this global is the data-device manager (the clipboard)...
+    else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+      self->wlClip_.bindManager(registry, name, version);
     }
     // If instead this global is the tablet manager (pens)...
     else if (strcmp(interface, zwp_tablet_manager_v2_interface.name) == 0) {
@@ -19170,6 +21438,7 @@ inline LiteUIImpl::LiteUIImpl(const std::string &title, int w, int h,
   if (!hwnd_) {
     throw std::runtime_error("CreateWindowExW failed");
   }
+  setupFileDrop();
   {
     // The window may have opened on a monitor whose DPI differs from the
     // system DPI used above: adopt its real scale and resize to match.
@@ -19203,6 +21472,8 @@ inline LiteUIImpl::LiteUIImpl(const std::string &title, int w, int h,
 #else
   // Connect to the compositor via the default Wayland socket.
   display_ = wl_display_connect(nullptr);
+  wlClip_.attach(display_);
+  wlClip_.setDropHooks(makeDropHooks());
   // Fail loudly if no compositor is reachable.
   if (!display_)
     throw std::runtime_error("Failed to connect to Wayland display");
@@ -19302,6 +21573,7 @@ inline LiteUIImpl::~LiteUIImpl() {
   releaseDeviceResources();
   if (d2dFactory_)
     d2dFactory_->Release();
+  teardownFileDrop();
   // Destroy the native window if it was successfully created.
   if (hwnd_)
     DestroyWindow(hwnd_);
@@ -19396,6 +21668,8 @@ inline LiteUIImpl::~LiteUIImpl() {
 #endif
       wl_pointer_destroy(pointer_);
   }
+  // The data device hangs off the seat: destroy it first.
+  wlClip_.shutdown();
   // Release the seat object if one was bound.
   if (seat_) {
 #ifdef WL_SEAT_RELEASE_SINCE_VERSION
@@ -20092,8 +22366,12 @@ inline void LiteUIImpl::run() {
     size_t intervalStart = fds.size();
     for (auto &t : intervalTimers_)
       fds.push_back({t.fd, POLLIN, 0});
+    // In-flight clipboard writes (a reader's pipe was full): see WlClipboard.
+    const size_t clipStart = fds.size();
+    const size_t clipCount = wlClip_.appendPollFds(fds);
 
-    int n = poll(fds.data(), static_cast<nfds_t>(fds.size()), -1);
+    int n = poll(fds.data(), static_cast<nfds_t>(fds.size()),
+                 wlClip_.pollTimeoutMs());
     if (n < 0) {
       wl_display_cancel_read(display_);
       break;
@@ -20103,6 +22381,7 @@ inline void LiteUIImpl::run() {
     else
       wl_display_cancel_read(display_);
     wl_display_dispatch_pending(display_);
+    wlClip_.servicePolled(fds.data() + clipStart, clipCount);
 
     if (repeatTimerFd_ >= 0 && fds[repeatIdx].revents & POLLIN)
       fireRepeatIfDue();
@@ -20378,6 +22657,9 @@ void LiteUI::wake() { p_->wake(); }
 float LiteUI::contentScale() const { return p_->contentScale(); }
 void LiteUI::setScaleChangedHandler(std::function<void()> fn) {
   p_->setScaleChangedHandler(std::move(fn));
+}
+void LiteUI::setFileDropHandler(std::function<void(DropEvent &)> fn) {
+  p_->setFileDropHandler(std::move(fn));
 }
 void LiteUI::setWakeHandler(std::function<void()> fn) {
   p_->setWakeHandler(std::move(fn));
