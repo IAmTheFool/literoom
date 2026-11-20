@@ -13,7 +13,7 @@ static View buildExportPane() {
   exportPane.style.direction = FlexDirection::Column;
   exportPane.style.gap = 6.0f;
   exportPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 8 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kExportActivity ? Display::Flex : Display::None; });
 
   Text exportHint;
   exportHint.label = std::function<std::string()>([]() -> std::string {

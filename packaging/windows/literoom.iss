@@ -15,8 +15,12 @@ AppId={{B7C3E5A2-4D81-4F6A-9C0E-2A5D8F13C7B9}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=Roshan
+AppPublisherURL=https://github.com/IAmTheFool/literoom
+AppSupportURL=https://github.com/IAmTheFool/literoom/issues
+AppUpdatesURL=https://github.com/IAmTheFool/literoom/releases
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
+DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyAppExe}
 OutputDir=..\..\build\installer
 OutputBaseFilename=literoom-setup-x64
@@ -27,6 +31,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=..\icons\literoom.ico
+LicenseFile=..\..\LICENSE
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked

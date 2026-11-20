@@ -15,8 +15,10 @@ static View buildCurvePane() {
   curvePane.style.width = Size::full();
   curvePane.style.direction = FlexDirection::Column;
   curvePane.style.gap = 8.0f;
-  curvePane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 4 ? Display::Flex : Display::None; });
+  curvePane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kCurveActivity ? Display::Flex
+                                                  : Display::None;
+  });
 
   // Channel tabs. A bullet after a name marks a curve that has been changed,
   // so an edit on a channel you've since switched away from isn't forgotten.
@@ -36,7 +38,8 @@ static View buildCurvePane() {
     tab.style.alignItems = Align::Center;
     tab.style.hoverColor = kColorActivityHover;
     tab.style.backgroundColor = std::function<Color()>([ch]() -> Color {
-      return uiState.curve.channel == ch ? kColorDropdownRowHover : kColorActivityBarBg;
+      return uiState.curve.channel == ch ? kColorDropdownRowHover
+                                         : kColorActivityBarBg;
     });
     tab.style.borderWidth = std::function<float()>(
         [ch] { return uiState.curve.channel == ch ? 1.0f : 0.0f; });
@@ -72,13 +75,14 @@ static View buildCurvePane() {
   curveCanvas.onPaint = [](CanvasContext &ctx) { paintCurve(ctx); };
   curveCanvas.canvasDirtySource = [] {
     static uint32_t lastPainted = 0;
-    static int lastActivity = -2;
+    static int lastActivity = kNeverSeenActivity;
     // Every image recompute bumps histVersion, which covers curve edits,
     // undo/redo, and a newly opened image.
     refreshHistogramIfStale();
     const bool tabChanged = state.activeActivity != lastActivity;
     lastActivity = state.activeActivity;
-    const bool uiDirty = uiState.curve.uiDirty; // channel switch / point selection
+    const bool uiDirty =
+        uiState.curve.uiDirty; // channel switch / point selection
     uiState.curve.uiDirty = false;
     if (state.histVersion == lastPainted && !tabChanged && !uiDirty)
       return false;
@@ -95,11 +99,14 @@ static View buildCurvePane() {
   curveInfo.label = std::function<std::string()>([]() -> std::string {
     const auto &p = curveActiveCurve();
     const std::string name = curveChannelName(uiState.curve.channel);
-    if (uiState.curve.active >= 0 && uiState.curve.active < static_cast<int>(p.size()))
+    if (uiState.curve.active >= 0 &&
+        uiState.curve.active < static_cast<int>(p.size()))
       return name + ": In " +
-             std::to_string(static_cast<int>(std::lround(p[uiState.curve.active].x))) +
+             std::to_string(
+                 static_cast<int>(std::lround(p[uiState.curve.active].x))) +
              "  Out " +
-             std::to_string(static_cast<int>(std::lround(p[uiState.curve.active].y)));
+             std::to_string(
+                 static_cast<int>(std::lround(p[uiState.curve.active].y)));
     return name + ": " + std::to_string(p.size()) + " points";
   });
   curveInfo.fontSize = 13.0f;

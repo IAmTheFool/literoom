@@ -8,7 +8,7 @@
 // ---------------- Crop ----------------
 
 static bool cropToolActive() {
-  return state.activeActivity == 2 && state.image != nullptr;
+  return state.activeActivity == kCropActivity && state.image != nullptr;
 }
 
 // Width/height ratio the selection is locked to, or 0 for free-form.

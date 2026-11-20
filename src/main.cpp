@@ -5,13 +5,7 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <cctype>
-#include <cmath>
 #include <condition_variable>
-#include <csetjmp>
-#include <cstdio>
-#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -165,19 +159,19 @@ int main() {
   installShortcuts(ui);
 
   const std::vector<Activity> activities = {
-      {0, "Info", "I"},
-      {kHistoryActivity, "History", "H"},
-      {kSnapshotsActivity, "Snapshots", "S"},
-      {1, "Adjust", "A"},
-      {kPresetsActivity, "Presets", "P"},
-      {kLutsActivity, "LUTs", "L"},
-      {4, "Curve", "~"},
-      {5, "Color Mix", "M"},
-      {6, "Color Grading", "G"},
-      {7, "Masks", "\u25D0"},
-      {2, "Crop", "C"},
-      {3, "Rotate", "R"},
-      {8, "Export", "E"},
+      {kInfoActivity,        "Info",          "I"},
+      {kHistoryActivity,     "History",       "H"},
+      {kSnapshotsActivity,   "Snapshots",     "S"},
+      {kAdjustActivity,      "Adjust",        "A"},
+      {kPresetsActivity,     "Presets",       "P"},
+      {kLutsActivity,        "LUTs",          "L"},
+      {kCurveActivity,       "Curve",         "~"},
+      {kColorMixActivity,    "Color Mix",     "M"},
+      {kColorGradingActivity,"Color Grading", "G"},
+      {kMasksActivity,       "Masks",         "\u25D0"},
+      {kCropActivity,        "Crop",          "C"},
+      {kRotateActivity,      "Rotate",        "R"},
+      {kExportActivity,      "Export",        "E"},
   };
 
   View root;

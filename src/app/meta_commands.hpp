@@ -313,7 +313,7 @@ static void exportImage() {
 }
 
 static void toggleSidebar() {
-  state.activeActivity = (state.activeActivity == -1) ? 0 : -1;
+  state.activeActivity = (state.activeActivity == kNoActivity) ? kInfoActivity : kNoActivity;
   state.markDirty(); // the crop overlay shows only while the Crop pane is open
 }
 

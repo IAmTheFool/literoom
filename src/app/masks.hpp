@@ -72,7 +72,7 @@ static void setMaskTintColor(int idx) {
 }
 
 static bool maskToolActive() {
-  return state.activeActivity == 7 && state.image != nullptr;
+  return state.activeActivity == kMasksActivity && state.image != nullptr;
 }
 
 // Width of one of `n` equal chips / tabs sharing a row of the mask panel.

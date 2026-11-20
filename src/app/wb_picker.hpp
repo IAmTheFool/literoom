@@ -20,7 +20,7 @@ constexpr int kWbPatchRadius = 2;
 static bool wbPickerActive() {
   if (!state.wbPicking)
     return false;
-  if (state.activeActivity != 1 || !state.image ||
+  if (state.activeActivity != kAdjustActivity || !state.image ||
       state.compare != CompareMode::Off) {
     state.wbPicking = false;
     return false;
@@ -43,7 +43,7 @@ static void toggleWbPicker() {
     setStatus("Leave Before / After to pick a white balance", true);
     return;
   }
-  state.activeActivity = 1; // the picker lives in the Adjust pane
+  state.activeActivity = kAdjustActivity; // the picker lives in the Adjust pane
   state.wbPicking = true;
   setStatus("White balance: click a neutral gray in the picture (Esc cancels)",
             false);

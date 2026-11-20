@@ -1,4 +1,5 @@
-// app/editor_state.hpp: crop / filmstrip / compare state and EditorState (the global `state`)
+// app/editor_state.hpp: crop / filmstrip / compare state and EditorState (the
+// global `state`)
 //
 // UI-shell code split out of main.cpp. A plain move: nothing was changed.
 // Included only by main.cpp, at the spot where this code used to be, so it
@@ -130,8 +131,8 @@ struct FilmEntry {
   // filmThumbTexture). Made lazily while painting, hence mutable.
   mutable std::shared_ptr<CanvasTexture> thumbTex;
   mutable std::shared_ptr<const CanvasImage> thumbTexOf; // what thumbTex shows
-  bool failed = false;                      // couldn't be decoded: plain box
-  bool edited = false;                      // has saved edits (a sidecar file)
+  bool failed = false;   // couldn't be decoded: plain box
+  bool edited = false;   // has saved edits (a sidecar file)
   bool selected = false; // in the multi-selection (Sync Settings)
   PhotoMeta meta;        // rating / flag / color label
   bool scanned = false;  // `meta` has been read from the sidecar
@@ -210,8 +211,8 @@ struct EditorState {
   // LOGICAL units, so `zoom` is logical units per image pixel, and every use of
   // it (lx / state.zoom, ctx.scale(state.zoom), ...) stays correct on a HiDPI
   // display. What the user sees ("100%") is device-based: zoomDev is device
-  // pixels per image pixel, so 100% really is one image pixel per physical pixel
-  // (pixel-exact), and zoom = zoomDev / dpr. Change them only through
+  // pixels per image pixel, so 100% really is one image pixel per physical
+  // pixel (pixel-exact), and zoom = zoomDev / dpr. Change them only through
   // applyZoomDev() / setZoom() / setDpr().
   float zoom = 1.0f;
   float zoomDev = 1.0f;
@@ -221,7 +222,7 @@ struct EditorState {
   // drawn into it at an offset that we compute: centered when it fits, scrolled
   // by scrollX/scrollY (logical units, in the padded picture) when it doesn't.
   struct View2D {
-    float w = 0, h = 0;           // canvas size, from onLayout
+    float w = 0, h = 0; // canvas size, from onLayout
     float scrollX = 0, scrollY = 0;
     enum class Drag { None, Pan, VThumb, HThumb } drag = Drag::None;
     float dragX = 0, dragY = 0;             // pointer at press
@@ -294,7 +295,7 @@ struct EditorState {
       0; // index into kMaskTintPalette (session only, not saved)
   MaskUi mask;
 
-  int activeActivity = 0; // -1 = sidebar closed
+  int activeActivity = kInfoActivity; // kNoActivity = sidebar closed
   float sidebarWidth = 220.0f;
   float maskPanelW = 300.0f; // right-hand mask panel (Masks pane only)
   int maskTab = 0;           // its tab: 0 Effect, 1 Shape, 2 Parts
@@ -409,4 +410,3 @@ static void applyZoomDev(float zoomDev) {
   state.zoomDev = std::clamp(zoomDev, kZoomMin, kZoomMax);
   state.zoom = state.zoomDev / state.dpr;
 }
-

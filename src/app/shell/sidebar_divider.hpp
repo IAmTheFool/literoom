@@ -13,7 +13,7 @@ static View buildSidebarDivider() {
   vDivider.style.backgroundColor = kColorDivider;
   vDivider.style.hoverColor = kColorDividerHover;
   vDivider.style.width = std::function<Size()>([] {
-    return Size::pixel(state.activeActivity != -1 ? kDividerW : 0.0f);
+    return Size::pixel(state.activeActivity != kNoActivity ? kDividerW : 0.0f);
   });
 
   auto updateSidebarWidth = [](float localX) {

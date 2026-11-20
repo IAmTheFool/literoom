@@ -13,7 +13,7 @@ static View buildGradePane() {
   gradePane.style.direction = FlexDirection::Column;
   gradePane.style.gap = 10.0f;
   gradePane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 6 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kColorGradingActivity ? Display::Flex : Display::None; });
 
   // Mode tabs: 3-Way | Shadows | Mid | High | Global. A bullet marks a range
   // that has been adjusted.

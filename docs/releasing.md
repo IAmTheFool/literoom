@@ -7,23 +7,33 @@
 - Windows (MSVC): Debug and Release
 - Linux (GCC 14): Debug, Release, and Debug + AddressSanitizer
 
-The golden render test is skipped (not failed) when there is no golden file for that compiler and configuration. See [testing.md](testing.md).
+CI builds **without** ONNX Runtime (basic object selection only). The golden render test is skipped (not failed) when there is no golden file for that compiler and configuration. See [testing.md](testing.md).
 
 ## Cutting a release
 
 1. Make sure `main` is green.
-2. Tag and push:
+2. Bump `project(literoom VERSION ...)` in the root `CMakeLists.txt` if you want local builds to match.
+3. Tag and push:
    ```
    git tag v0.2.0
    git push origin v0.2.0
    ```
-3. `.github/workflows/release.yml` builds and tests both platforms (Release), then publishes a GitHub release with:
-   - `literoom-windows-x64.zip`: `literoom.exe`
-   - `literoom-linux-x64.tar.gz`: the `literoom` binary
+4. `.github/workflows/release.yml` runs for the tag. On Windows and Linux it checks the models, downloads ONNX Runtime, builds Release with `-DLITEROOM_ONNX=ON`, runs `ctest`, packages, and then publishes a GitHub release with generated notes.
 
 If either platform fails, no release is created.
 
-The tag only names the release. The version inside the build comes from `project(literoom VERSION ...)` in the root `CMakeLists.txt`, so bump it by hand before tagging.
+### What a release contains
+
+| File | What it is |
+|---|---|
+| `literoom-setup-x64.exe` | Windows installer (Inno Setup, `packaging/windows/literoom.iss`) |
+| `literoom-windows-x64.zip` | `literoom/` folder: `literoom.exe`, `onnxruntime*.dll`, the Visual C++ runtime DLLs and `models/` |
+| `literoom_<version>_amd64.deb` | Linux package (CPack), installs into `/usr` |
+| `literoom-linux-x64.tar.gz` | `literoom/` folder, runs from anywhere via `bin/literoom` |
+
+All of them ship with MobileSAM object selection: ONNX Runtime and the two `.onnx` models are bundled.
+
+The tag only names the release. It sets the installer version and the `.deb` version (`v1.2.3` becomes `1.2.3`, and `1.2.3-rc1` becomes `1.2.3~rc1`). The version compiled into local builds comes from `project(literoom VERSION ...)`.
 
 To try the pipeline without a real release, push a throwaway tag such as `v0.0.1-test`, then delete the release and the tag:
 ```
@@ -36,20 +46,26 @@ git tag -d v0.0.1-test
 | Change | File |
 |--------|------|
 | Version for local builds | `project(literoom VERSION ...)` in root `CMakeLists.txt` |
+| ONNX Runtime version in releases | `ORT_VERSION` at the top of `release.yml` (the only place) |
 | New Linux system library the app needs | `third_party/liteui/CMakeLists.txt` (`pkg_check_modules` and link), the apt list in **both** workflows, and the requirements in `README.md` |
 | Compiler version on Linux CI | `g++-14` lines in **both** workflows |
 | Update liteui | replace `third_party/liteui/liteui.hpp`; if its Wayland protocols changed, add or replace the files in `third_party/liteui/wayland-protocols/` (every `*-protocol.c` there is compiled automatically) |
 | Add a build or test configuration | `CMakePresets.json` (configure, build and test presets), then the matrix in `build.yml` |
 | Change what a release contains | the "Package" steps in `release.yml` |
+| Windows installer (name, shortcuts, files) | `packaging/windows/literoom.iss` |
+| Linux package (name, section, description) | the `CPACK_*` block in root `CMakeLists.txt` |
+| Linux menu entry or icon | `packaging/linux/literoom.desktop`, `packaging/icons/` |
 
 ## Things that must not change
 
+- **The `AppId` GUID in `literoom.iss`.** Windows uses it to recognise an upgrade of the same app. Changing it makes upgrades install side by side.
 - **The vendored `wayland-protocols/` files must stay committed.** CI has no `wayland-scanner` step.
 - **Golden files in `tests/golden/`.** They are the reference for `literoom_golden_render`, one per compiler and configuration. Re-record one only on purpose (`literoom_golden_record`), never to make a failing test pass.
+- **The MobileSAM models in `models/`.** The release workflow fails if `models/mobile_sam.encoder.onnx` or `models/mobile_sam.decoder.onnx` is missing, or smaller than 1 MB (which usually means a Git LFS pointer instead of the real file). The checkout uses `lfs: true`.
 
 ## Notes
 
-- **No ONNX Runtime in releases.** CI and release builds use `LITEROOM_ONNX=OFF`, so the published binaries have the basic color-grow object selection only. To ship MobileSAM, the workflows would have to download ONNX Runtime, configure with `-DLITEROOM_ONNX=ON -DONNXRUNTIME_DIR=...`, and package `models/` and the runtime library with the binary.
-- MSVC builds link the C++ runtime statically (`CMAKE_MSVC_RUNTIME_LIBRARY`), so the Windows zip needs no Visual C++ Redistributable.
-- The Windows exe is unsigned, so SmartScreen shows an "unknown publisher" warning. Code signing is a separate step if you want it.
-- There is no installer or `.deb`. The release is a plain zip and tarball. Adding an installer means adding packaging files, a CPack or Inno Setup step in CMake and `release.yml`, and a row for them in the table above.
+- **Visual C++ runtime.** MSVC builds link the C++ runtime statically (`CMAKE_MSVC_RUNTIME_LIBRARY`), but `onnxruntime.dll` still needs the Visual C++ runtime. The release copies `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll` next to the exe, so a clean Windows machine needs no redistributable.
+- **Linux layout.** With ONNX on, the install rules put the real binary and `libonnxruntime.so*` in `lib/literoom/`, the models in `share/literoom/models/`, and a small launcher script in `bin/literoom`. The launcher finds everything relative to itself and sets `LITEROOM_MODELS`, so the same tree works from `/usr` (the `.deb`) and from an extracted tarball. The `.deb`'s `Depends:` list is generated by `dpkg-shlibdeps`.
+- **Unsigned.** The Windows exe and installer are unsigned, so SmartScreen shows an "unknown publisher" warning. Code signing is a separate step.
+- **Building a release locally.** Configure with `-DLITEROOM_ONNX=ON -DONNXRUNTIME_DIR=...` (see the README), then on Linux: `cpack --config build/release/CPackConfig.cmake -G DEB`.

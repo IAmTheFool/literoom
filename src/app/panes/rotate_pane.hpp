@@ -13,7 +13,7 @@ static View buildRotatePane() {
   rotatePane.style.direction = FlexDirection::Column;
   rotatePane.style.gap = 6.0f;
   rotatePane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 3 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kRotateActivity ? Display::Flex : Display::None; });
 
   Text rotateHint;
   rotateHint.label = std::function<std::string()>([]() -> std::string {

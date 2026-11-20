@@ -22,7 +22,7 @@ static MaskPaneViews buildMaskPanes() {
   maskPane.style.direction = FlexDirection::Column;
   maskPane.style.gap = 6.0f;
   maskPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 7 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kMasksActivity ? Display::Flex : Display::None; });
 
   Text maskHint;
   maskHint.label = std::function<std::string()>([]() -> std::string {

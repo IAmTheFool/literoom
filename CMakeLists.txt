@@ -64,9 +64,6 @@ source_group(TREE ${LITEROOM_SRC} FILES ${LITEROOM_SRC}/main.cpp ${LITEROOM_HEAD
 
 if(MSVC)
     target_compile_options(literoom PRIVATE /utf-8 /bigobj)
-    # main() builds the whole UI in one large stack frame (~12k lines); raise the
-    # MSVC default stack from 1 MB to 8 MB until it is split up.
-    target_link_options(literoom PRIVATE /STACK:8388608)
 endif()
 
 # ------------------------------------------------------------------------
@@ -197,7 +194,7 @@ if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR                    "DEB")
     set(CPACK_PACKAGE_NAME                 "literoom")
     set(CPACK_PACKAGE_VENDOR               "Roshan")
-    set(CPACK_PACKAGE_CONTACT              "Roshan <roshan@example.com>")  # TODO: real address
+    set(CPACK_PACKAGE_CONTACT              "Roshan <chaudharyroshan2020@gmail.com>")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY  "Lightweight photo editor")
     # Debian packages belong in /usr, not CMake's default /usr/local.
     set(CPACK_PACKAGING_INSTALL_PREFIX     "/usr")
@@ -298,7 +295,6 @@ if(LITEROOM_TESTS)
     target_link_libraries(literoom_golden_render_test PRIVATE liteui::liteui Threads::Threads)
     if(MSVC)
         target_compile_options(literoom_golden_render_test PRIVATE /utf-8 /bigobj)
-        target_link_options(literoom_golden_render_test PRIVATE /STACK:8388608)
     endif()
 
     add_test(NAME literoom_golden_render COMMAND literoom_golden_render_test ${GOLDEN_FILE})
@@ -319,7 +315,6 @@ if(LITEROOM_TESTS)
     target_link_libraries(literoom_lut_pane_test PRIVATE liteui::liteui Threads::Threads)
     if(MSVC)
         target_compile_options(literoom_lut_pane_test PRIVATE /utf-8 /bigobj)
-        target_link_options(literoom_lut_pane_test PRIVATE /STACK:8388608)
     endif()
 
     set(_lut_pane_env "")

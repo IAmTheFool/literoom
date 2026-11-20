@@ -2,6 +2,163 @@
 
 This page explains how Literoom is put together and, more importantly, **why**. If you are about to change the code, read this first. If you only want the one-line purpose of every file, see [headers.md](headers.md).
 
+## Project layout
+
+```
+literoom/
+├── CMakeLists.txt            Build: the app, ONNX option, install rules, .deb packaging, tests
+├── CMakePresets.json         msvc-* and gcc-* presets (debug, release, asan, profile)
+├── LICENSE
+├── README.md                 What it is, how to download, build and run
+│
+├── .github/workflows/
+│   ├── build.yml             CI: build and test on every push and pull request
+│   └── release.yml           On a v* tag: package for Windows and Linux, publish a release
+│
+├── docs/                     Developer documentation (this folder)
+│   ├── architecture.md      How the pieces fit together (this page)
+│   ├── headers.md           Reference for every engine header
+│   ├── app-headers.md       Reference for every file under src/app/
+│   ├── threading.md         Workers and the thread rules
+│   ├── undo-and-history.md  Undo steps and History labels
+│   ├── sidecar-format.md    The saved-edits file
+│   ├── extending.md         How to add a slider or a mask type
+│   ├── testing.md           Unit, golden and LUT-pane tests, sanitizers
+│   └── releasing.md         CI and cutting a release
+│
+├── models/                   MobileSAM .onnx files (encoder and decoder) for object selection
+│
+├── packaging/
+│   ├── icons/                literoom.ico (Windows) and literoom.png (Linux)
+│   ├── linux/                literoom.desktop (menu entry)
+│   └── windows/              literoom.iss (Inno Setup installer) and literoom.rc (exe icon)
+│
+├── src/                      All code. This folder is the include root.
+│   ├── main.cpp              Includes everything, then main(): window, workers, event loop
+│   │
+│   ├── core/                 ENGINE, lowest layer: the shared vocabulary
+│   │   ├── adjustments.hpp      The slider table (names, ranges, defaults)
+│   │   ├── auto_tone.hpp        Auto Tone maths
+│   │   ├── geometry.hpp         GeoFrame: orient, straighten and crop as one transform
+│   │   ├── image16.hpp          The 16-bit picture
+│   │   ├── image16_convert.hpp  8-bit to 16-bit conversion and back
+│   │   ├── pixel_math.hpp       Small pixel helpers (clamps, conversions)
+│   │   ├── raster_ops.hpp       Crop, quarter-turn rotate and mirror on pictures
+│   │   ├── tone_table.hpp       The float tone tables
+│   │   └── wide_chain.hpp       The 16-bit twin of the picture chain
+│   │
+│   ├── color/                ENGINE: color math
+│   │   ├── color_pass.hpp   The float color pass (white balance, saturation, filters, LUT)
+│   │   ├── color_mix.hpp    Color Mixer (eight hue bands)
+│   │   ├── color_grade.hpp  Color Grading wheels
+│   │   ├── curves.hpp       Tone curves
+│   │   └── lut3d.hpp        3D LUT lookup
+│   │
+│   ├── detail/               ENGINE: effects that look at neighboring pixels
+│   │   ├── detail_layer.hpp  Texture, Clarity and Sharpness
+│   │   ├── neighbor_fx.hpp   Dehaze, noise reduction (luminance and color), blur
+│   │   └── film_fx.hpp       Vignette and Grain
+│   │
+│   ├── mask/                 ENGINE: local adjustments
+│   │   ├── mask.hpp           A mask and its parts, combined into one weight map
+│   │   ├── mask_geom.hpp      Radial and linear gradient masks
+│   │   ├── mask_rect.hpp      Rectangle mask
+│   │   ├── mask_polygon.hpp   Polygon and lasso
+│   │   ├── mask_brush.hpp     Brush strokes
+│   │   ├── mask_range.hpp     Luminosity and color range
+│   │   ├── mask_raster.hpp    A 0..255 coverage map resolved for one picture
+│   │   ├── mask_object.hpp    Object mask (a coverage bitmap from a segmentation)
+│   │   ├── sam_segmenter.hpp  MobileSAM through ONNX Runtime (stand-in without it)
+│   │   └── seg_basic.hpp      The basic color-grow fallback
+│   │
+│   ├── io/                   ENGINE: everything that reads or writes bytes
+│   │   ├── sidecar.hpp        The saved-edits file (.literoom.json)
+│   │   ├── minijson.hpp       Small JSON reader and writer
+│   │   ├── photo_meta.hpp     Rating, flag and color label
+│   │   ├── preset.hpp         Presets
+│   │   ├── virtual_copy.hpp   Virtual copies: more than one set of edits per picture
+│   │   ├── lut_cube.hpp       .cube parser
+│   │   ├── lut_library.hpp    The LUT library folder and its table cache
+│   │   ├── image_source.hpp   The one place that knows how a file is opened
+│   │   ├── image_codec.hpp    Encoding a picture as PNG or JPEG
+│   │   ├── image_codec16.hpp  Reading any picture as 16-bit
+│   │   ├── image_meta.hpp     What a file says about itself (camera data, size)
+│   │   ├── exif.hpp           JPEG metadata helpers (EXIF reading and copying)
+│   │   ├── color_tag.hpp      Color-space tags and ICC profiles
+│   │   └── file_utils.hpp     Paths, folder listing, natural sort, atomic writes
+│   │
+│   ├── edit/                 ENGINE: the edit state
+│   │   ├── adjustment_set.hpp  AdjustmentSet: all edit values plus undo history
+│   │   └── render_params.hpp   RenderParams: the frozen form the renderer reads
+│   │
+│   ├── render/               ENGINE: turning edits into pixels
+│   │   ├── render_core.hpp   The float pixel pass
+│   │   ├── render.hpp        The synchronous entry point
+│   │   ├── render_bytes.hpp  The 8-bit reference renderer (used by tests)
+│   │   ├── histogram.hpp     Histogram
+│   │   └── scopes.hpp        Waveform and vectorscope
+│   │
+│   ├── workers/              ENGINE: background threads
+│   │   ├── latest_worker.hpp       The "latest request wins" worker
+│   │   ├── thumb_worker.hpp        Filmstrip thumbnails
+│   │   ├── export_render.hpp       Render one picture for export
+│   │   ├── export_worker.hpp       Batch export queue
+│   │   └── lut_preview_worker.hpp  LUT previews
+│   │
+│   └── app/                  UI SHELL (not engine): the window and everything in it
+│       ├── constants.hpp, editor_state.hpp, ui_state.hpp
+│       │                         Layout constants and colors; the editor model (`state`);
+│       │                         UI-only state (`uiState`)
+│       ├── render_worker.hpp, render_update.hpp, geometry_worker.hpp, decode.hpp
+│       │                         Glue to the background render, geometry and decode jobs
+│       ├── canvas_view.hpp, canvas_paint.hpp, readout.hpp, compare.hpp
+│       │                         The canvas: zoom and pan, painting, RGB readout, Before/After
+│       ├── crop.hpp, crop_tool.hpp, crop_overlay.hpp, rotate.hpp
+│       │                         Crop, rotate, flip and straighten
+│       ├── saved_edits.hpp, segmentation.hpp
+│       │                         Saving edits to the sidecar; object-selection glue
+│       ├── filmstrip.hpp, meta_commands.hpp, sync.hpp, export.hpp
+│       │                         Filmstrip, ratings and labels, Sync Settings, batch export
+│       ├── presets.hpp, snapshots.hpp, virtual_copies.hpp, lut_pane.hpp, history_panel.hpp
+│       │                         Logic behind Presets, Snapshots, virtual copies, LUTs, History
+│       ├── masks.hpp, mask_*.hpp
+│       │                         The Masks tool: list, shapes, polygon, brush, overlays,
+│       │                         effect and curve tabs, row widgets
+│       ├── widgets.hpp, color_ui.hpp, curve_editor.hpp
+│       │                         Reusable widgets: sliders, menus, color wheels, curve editor
+│       ├── wb_picker.hpp, auto_tone_hist.hpp, startup_checks.hpp
+│       │                         White-balance picker, Auto Tone, histogram polling, startup check
+│       │
+│       ├── panes/            One file per sidebar pane
+│       │   └── info, history, snapshots, adjust, presets, luts, curve, mix,
+│       │       grade, masks, crop, rotate, export  (+ pane_helpers.hpp)
+│       │
+│       └── shell/            The window frame, one file per area
+│           ├── titlebar.hpp          File, View, Image, Photo menus; undo and redo
+│           ├── activity_bar.hpp      Icon column on the left
+│           ├── sidebar.hpp           Holds every pane; sidebar_divider.hpp resizes it
+│           ├── histogram_view.hpp    Histogram, waveform and vectorscope above the panes
+│           ├── center_column.hpp     Canvas with the filmstrip underneath
+│           ├── mask_panel.hpp        Right-hand panel for the selected mask
+│           ├── status_bar.hpp        Messages, zoom controls
+│           └── shortcuts.hpp         All keyboard shortcuts
+│
+├── tests/
+│   ├── literoom_test.cpp     The one Catch2 program that includes every case
+│   ├── cases/                One .inc per engine header (54 files), plus lut_render
+│   ├── golden_render_test.cpp  Render fingerprints, the refactoring safety net
+│   ├── golden/               Reference fingerprints, one per compiler and config
+│   ├── lut_pane_test.cpp     The LUTs pane's logic without a window
+│   └── check.hpp             Small assert helper for the two programs above
+│
+└── third_party/liteui/
+    ├── liteui.hpp            LiteUI: window, widgets, canvas, PNG and JPEG decoders
+    ├── CMakeLists.txt        Builds liteui::liteui and its Linux dependencies
+    └── wayland-protocols/    Vendored Wayland protocol files, committed on purpose
+```
+
+Two rules decide where a file goes. **Engine folders** (`core`, `color`, `detail`, `mask`, `io`, `edit`, `render`, `workers`) are pure logic with no window code, and each header has a test file in `tests/cases/`. **`app/`** is the part that knows about the window; it may include anything, and nothing outside `app/` and `main.cpp` may include it.
+
 ## The big idea: engine and UI are separate
 
 Literoom is split into three layers:
@@ -9,7 +166,7 @@ Literoom is split into three layers:
 | Layer | What it is | Where |
 |---|---|---|
 | **Engine** | Header-only files that describe edits and turn them into pixels. No window, no widgets, no editor state (the only globals are internal caches: mutex-guarded, apart from the object-selection wand's one-entry cache, which only its own worker thread touches, and the test-only LUT folder override). | `*.hpp` in the folders under `src/` |
-| **UI shell** | One big file that builds the window, the panes and the canvas, and connects them to the engine. | `src/main.cpp` |
+| **UI shell** | The window, the panes and the canvas, and the glue that connects them to the engine. `main.cpp` only includes the pieces and runs the event loop. | `src/app/` and `src/main.cpp` |
 | **LiteUI** | The window, widget and canvas library, plus the PNG and JPEG decoders (a 16-bit PNG keeps its 16 bits). | `liteui.hpp` |
 
 Why split it this way? Because everything in the engine is a *plain function of plain values*. A slider value goes in, a number or a table comes out. That makes the engine easy to test without opening a window (every engine header has its own test file in `tests/cases/`; the one for `sam_segmenter.hpp` covers only `sam::preprocess` and the no-ONNX stand-in), and it makes it safe to run on a background thread. See [Tests and the safety net](#tests-and-the-safety-net).
@@ -32,24 +189,24 @@ core  →  color / detail / mask  →  io  →  edit  →  render
 | `edit/` | `AdjustmentSet` (the edit state with undo) and `RenderParams` (the frozen form of it) |
 | `render/` | The float pixel pass (`render_core`), the synchronous entry (`render`), the byte reference (`render_bytes`), histogram and scopes |
 | `workers/` | Background workers: the cancellable "latest wins" worker, thumbnails, batch export, LUT previews |
-| `app/` | **Not engine.** The UI shell, split out of `main.cpp` into files that `main.cpp` `#include`s (so the program is still one translation unit). It sits above every layer in the list: it may include anything, and nothing outside `app/` and `main.cpp` may include it. See [app/ and main.cpp](#app-and-maincpp). |
+| `app/` | **Not engine.** The UI shell: files that `main.cpp` `#include`s (so the program is still one translation unit). It sits above every layer in the list: it may include anything, and nothing outside `app/` and `main.cpp` may include it. See [app/ and main.cpp](#app-and-maincpp). |
 
 A header may include headers from folders below its own, never above. The few exceptions, and the full per-file list, are in [headers.md](headers.md#where-things-live).
 
 ### `app/` and `main.cpp`
 
-`src/app/` holds the UI shell as it is split out of `main.cpp`, one concern per file (the render-worker glue, `EditorState`, the filmstrip, the panes, and so on). The rules:
+`src/app/` holds the UI shell, one concern per file (the render-worker glue, `EditorState`, the filmstrip, the masks tool, and so on). The panes are in `app/panes/` (one file per sidebar pane) and the window frame is in `app/shell/` (one file per area). The rules:
 
-- **Still one translation unit.** Files in `app/` are `#pragma once` headers that only `main.cpp` includes, in the order the code appears today (several functions are forward-declared and depend on that order). The golden test and the LUT-pane test compile `main.cpp` itself, so they pick the split-out code up unchanged and `CMakeLists.txt` needs no edit: its `GLOB_RECURSE` already lists everything under `src/`.
+- **One translation unit.** Files in `app/` are `#pragma once` headers that only `main.cpp` includes, in a fixed order (several functions are forward-declared and depend on that order; the order is in the include-order table of [app-headers.md](app-headers.md#include-order)). The golden test and the LUT-pane test compile `main.cpp` itself, so they pick up everything under `app/` through it, and `CMakeLists.txt` needs no edit for a new file: its `GLOB_RECURSE` already lists everything under `src/`.
 - **One direction.** `app/` files may include the engine, `workers/` and LiteUI. No engine header, and no worker, may include anything from `app/`.
-- **The thread rule is unchanged.** A worker file moved into `app/` still never reads `state` and never calls LiteUI (except `wake()`); see [threading.md](threading.md).
-- **Not in headers.md.** `headers.md` documents engine headers only. Every `app/` file, with its types, constants and functions, is documented in [app-headers.md](app-headers.md); `src/app/README.md` has the include order and the rules for adding code.
+- **The thread rule applies here too.** Worker glue in `app/` never reads `state` from the worker thread and never calls LiteUI (except `wake()`); see [threading.md](threading.md).
+- **Not in headers.md.** `headers.md` documents engine headers only. Every `app/` file, with its types, constants and functions, is documented in [app-headers.md](app-headers.md).
 
-`main.cpp` is long (about 11,900 lines) because it holds all the UI. A few of its big sections are fenced with `// BEGIN <name>` / `// END <name>` comments (`renderworker`, `geometryworker`, `filmstrip`, `maskui`, `compare`), which mark the parts that move together if the file is ever split. It reads roughly top to bottom as: layout constants and colors, the render worker, crop and filmstrip state, `EditorState`, handing worker results back to the UI thread, crop, the geometry worker, rotate/flip and straighten, opening a file (the decode worker), object segmentation, saving and loading edits, Sync Settings (its worker), batch export (its worker), the filmstrip (with the rating, flag and label filter bar and commands), small reusable widgets, one section per pane (plus the History panel, the Presets list, which also holds the Copy / Paste Settings clipboard, the LUTs list with its preview polling, and Before / After), and finally `main()` which wires up shortcuts, menus, the workers' wake-ups and the event loop.
+`main.cpp` is short (about 230 lines): the includes and `main()`. `main()` creates the window, wires every worker's notify callback to `ui.wake()`, installs the shortcuts, builds the window from the `build...` functions in `app/shell/` (title bar, activity bar, sidebar, divider, center column, mask panel, status bar), runs the event loop, and then saves the last edits and shuts the workers down.
 
 ## The picture pipeline
 
-`EditorState` (in `main.cpp`) does not keep one image. It keeps a **chain**, where each image is built from the one before:
+`EditorState` (in `app/editor_state.hpp`) does not keep one image. It keeps a **chain**, where each image is built from the one before:
 
 ```
 original  →  oriented  →  rotated  →  source  →  image
@@ -158,7 +315,7 @@ Luminosity and Color Range are **not spatial**: they select by the picture's own
 
 The Masks list holds at most 16 masks (`kMaxMasks`) and each mask at most 6 parts (`kMaxMaskParts`). The brush, polygon and object maps are cached, and `clearMaskCaches()` empties all of them (brush maps, polygon maps, and the warped and grown object maps).
 
-**Object selection.** An Object mask's coverage bitmap comes from a segmenter that runs on the object-selection worker (`SegmentRequest` / `SegmentResult` in `main.cpp`, a `LatestWorker`), and the choice between engines is made **at run time**, in `segmentObject()` in `main.cpp`:
+**Object selection.** An Object mask's coverage bitmap comes from a segmenter that runs on the object-selection worker (`SegmentRequest` / `SegmentResult` in `app/segmentation.hpp`, a `LatestWorker`), and the choice between engines is made **at run time**, in `segmentObject()` in `app/segmentation.hpp`:
 
 - The first time it runs it tries to load MobileSAM (`mask/sam_segmenter.hpp`, ONNX Runtime) from `$LITEROOM_MODELS`, else a `models` folder next to the executable (CMake copies `models/` there for ONNX builds). If that works, the pane shows "Engine: MobileSAM".
 - If it does not (the project was configured without `-DLITEROOM_ONNX=ON`, or the model files are missing or unusable), the whole session falls back to a basic color-grow selection (`segmentObjectWand`, built on `mask/seg_basic.hpp`) and the pane says why and which folder it looked in. The choice is made once and kept.
@@ -179,7 +336,7 @@ Presets follow the same rules as the rest of the engine:
 - **Applied through `AdjustmentSet`.** `applyPreset` replaces the look and is one undo step, labelled `Preset: <name>` in History. A step stores a full copy of the look, so deleting the preset file later never changes a picture or its history. See [undo-and-history.md](undo-and-history.md#presets).
 - **Nothing geometric is touched.** Because a preset holds no crop, rotation or masks, applying one never goes through the `GeoFrame`, the geometry worker or the mask caches. It only changes values the normal render path already reads, so the picture is redrawn like any other adjustment-only change: synchronously for small photos, on the background render worker for large ones (it is not a slider drag, so the fast preview path is not used).
 
-The Presets pane in `main.cpp` is a thin layer over this: a list of the files in the presets folder, a name field and a Save button. The list is a cache, re-read when the pane is opened and after a save or delete, never per frame. For the per-function details see `preset.hpp` in [headers.md](headers.md#presethpp).
+The Presets pane (`app/presets.hpp` and `app/panes/presets_pane.hpp`) is a thin layer over this: a list of the files in the presets folder, a name field and a Save button. The list is a cache, re-read when the pane is opened and after a save or delete, never per frame. For the per-function details see `preset.hpp` in [headers.md](headers.md#presethpp).
 
 ## 3D LUTs
 
@@ -193,18 +350,18 @@ A **3D LUT** (a `.cube` file) is a color lookup table: it maps every RGB value o
 - **When the library and the edit disagree.** `Ok` is the normal case. `HashChanged` (the file has the same name but other bytes) still applies the file; the status bar says so when the picture is opened. `Missing` and `Unreadable` apply nothing and keep the reference (the picture opens without the look, the LUTs pane says why, and putting the file back restores it). **Batch export is stricter**, like it is for an unusable sidecar: a picture whose LUT is in use (amount above 0) but missing or unreadable is *skipped with a reason* rather than exported without its look.
 - **Which color space.** Only display-referred LUTs, made for ordinary sRGB / Rec.709 pictures, because the app edits JPEG and PNG pictures and does no color management. A LUT made for camera-log footage will look wrong on them. Nothing in a `.cube` file says so for certain, so import only *suggests*: a one-time, non-blocking status message when the name or title contains a log-curve word (`log`, `slog3`, `vlog`, `logc`, ...), when the input domain is not 0..1, or when mid-gray comes out far from mid-gray. The table keeps the file's domain, so log and RAW workflows can be supported later without changing the format.
 - **Previews.** The LUTs pane shows each LUT applied to the open picture. That needs every LUT file read and a small render for each, so it runs on its own worker (`workers/lut_preview_worker.hpp`, see [threading.md](threading.md#the-lut-preview-worker-streams-results-for-the-newest-job)). A preview is the picture's own look with its LUT *replaced* by the one being previewed (never stacked), at the filmstrip's thumbnail size and without the neighbor effects. Previews bypass the cache (`loadLutFile`), so previewing a hundred LUTs cannot push out the one in use. The cache is emptied with `clearLutCache()` whenever the folder may have changed: on import and when a picture is opened (listing the folder afresh does not empty it).
-- **The LUTs pane** (`main.cpp`, activity 12) is a thin layer: Import (a file picker, `importLutPaths`), a list of rows (each a preview, a name and a line about the file; click applies it as one undo step), the picture's current LUT with its LUT Amount slider, and Remove LUT. Previews are made again when the folder's list or the picture's look changes, not when the pane's own controls do, and never in the middle of a drag.
+- **The LUTs pane** (`app/lut_pane.hpp` and `app/panes/luts_pane.hpp`, activity 12) is a thin layer: Import (a file picker, `importLutPaths`), a list of rows (each a preview, a name and a line about the file; click applies it as one undo step), the picture's current LUT with its LUT Amount slider, and Remove LUT. Previews are made again when the folder's list or the picture's look changes, not when the pane's own controls do, and never in the middle of a drag.
 - **What is not supported (yet).** 1D LUTs, `.3dl` and Hald PNG files; camera-log input; a LUT per mask; deleting a LUT from inside the app (remove the file from the folder; pictures that used it then show the "missing" message).
 
 ## Copy, paste and sync settings
 
 These reuse the preset machinery instead of adding a new kind of data. The thing being moved around is a `Preset` (the look: sliders, curves, Color Mixer, Color Grading and the LUT), never crop, rotation or masks, for the same reason presets leave them out.
 
-- **Copy / Paste Settings** (Ctrl+Shift+C / V) work on the open picture. Copy keeps `currentPreset()` in a small in-memory clipboard in `main.cpp`; Paste calls `applyPreset`, so it is one undo step labelled `Preset: Pasted`. See [undo-and-history.md](undo-and-history.md#copy-and-paste-settings).
+- **Copy / Paste Settings** (Ctrl+Shift+C / V) work on the open picture. Copy keeps `currentPreset()` in a small in-memory clipboard in `uiState` (`app/ui_state.hpp`); Paste calls `applyPreset`, so it is one undo step labelled `Preset: Pasted`. See [undo-and-history.md](undo-and-history.md#copy-and-paste-settings).
 - **Sync Settings** (Ctrl+Shift+S) copies the open picture's look onto the pictures selected in the filmstrip (Ctrl+click toggles one, Shift+click selects a range, Ctrl+A selects all, a plain click clears the selection and opens a picture). The other pictures are not open, so there is no `AdjustmentSet` to change. Instead `sidecarSyncLook` (a pure function in `io/sidecar.hpp`) takes a picture's sidecar text, replaces only the look (the four groups a preset holds, and the LUT: a look without a LUT clears the picture's LUT), and returns the new text, so each picture keeps its own crop, rotation and masks. A background worker does the file work, because a picture with no sidecar needs its size read once (from the file's header, no pixels are decoded) to be recorded in the new sidecar. See [sidecar-format.md](sidecar-format.md#syncing-a-look-onto-other-pictures) and [threading.md](threading.md#the-sync-worker-is-a-batch-that-is-never-superseded).
 - **Batch export** (File > Export Selected... Ctrl+Shift+E, Export All Shown..., Stop Export; the same buttons are in the Export pane) renders every picked filmstrip picture from its own saved edits into one folder, using the Export pane's format, quality, metadata and resize settings. It is the missing last step after ratings, Sync Settings and virtual copies: each picture, and each virtual copy, is exported with its own look. See [Exporting a picture](#exporting-a-picture) and [threading.md](threading.md#the-export-worker-is-a-cancellable-fifo-of-whole-pipelines).
 
-The engine stays UI-free: `sidecarSyncLook` has no file, window or editor dependency and is tested with plain strings. The selection flags and the clipboard are UI-side state in `main.cpp`.
+The engine stays UI-free: `sidecarSyncLook` has no file, window or editor dependency and is tested with plain strings. The selection flags and the clipboard are UI-side state (`app/editor_state.hpp` and `app/ui_state.hpp`).
 
 ## Snapshots and virtual copies
 
@@ -276,7 +433,7 @@ The engine does the work and stays UI-free:
 - **The math** is `solveWhiteBalance` in `color/color_pass.hpp`: the inverse of the white-balance gains `makeColorPass` builds, solved in closed form from a spot's R, G and B. It reports `Ok`, `Limited` (needs more than ±100), `TooDark` or `Clipped`. See [headers.md](headers.md#color_passhpp).
 - **The edit** is `AdjustmentSet::setWhiteBalance`: both sliders in one undo step, labelled `White Balance <t> / <n>`. See [undo-and-history.md](undo-and-history.md#white-balance-picker).
 
-The UI side lives in `main.cpp` and is small:
+The UI side lives in `app/wb_picker.hpp` and is small:
 
 - **Which pixels it reads.** Not the shown picture. White balance runs *after* the tone tables, so the spot's color has to be taken where the color pass would receive it: `state.source` (what the adjustments run on) through the current `buildChannelLuts()`, before any white balance. That makes the answer independent of the Temperature and Tint already set, and of Saturation, the Mixer, grading and the Filters, which all come later. The RGB readout under the cursor samples the finished picture, which is why it cannot be reused.
 - **A 5 × 5 patch** (`kWbPatchRadius = 2`) is averaged around the click, so one noisy pixel cannot decide the result. Fully transparent pixels (the empty corners of a straightened picture) are skipped.
@@ -294,7 +451,7 @@ The engine does the work and stays UI-free:
 - **The math** is `solveAutoTone` in `core/auto_tone.hpp`: a function of the luma histogram that finds the picture's black and white points (the 0.5 % and 99.5 % levels) and picks the sliders that send them to fixed targets. It stretches the measured range instead of aiming at mid-gray, so a dark scene stays dark and a well-exposed picture is barely touched. See [headers.md](headers.md#auto_tonehpp).
 - **The edit** is `AdjustmentSet::setAutoTone`: the four sliders in one undo step labelled `Auto Tone`. See [undo-and-history.md](undo-and-history.md#auto-tone).
 
-The UI side lives in `main.cpp` (`autoTone()`) and is small:
+The UI side lives in `app/auto_tone_hist.hpp` (`autoTone()`) and is small:
 
 - **Which pixels it reads.** `state.source`, the picture the adjustments run on, counted with `histogram::compute`. Not the shown picture: that one already has the tone sliders applied, so its histogram would change every time Auto Tone ran. Reading the source makes the answer independent of the sliders already set, so pressing it twice is a no-op ("already set").
 - **What it leaves alone.** Brightness, Highlights, Shadows, the Levels sliders (Black Point, White Point, Gamma), curves and masks. Auto Tone is a global edit: masks keep their own sliders.
@@ -312,7 +469,7 @@ The engine does the work and stays UI-free:
 - **Shares, not counts.** Brightness is a function of the share of a column (waveform) or of the picture (vectorscope) that sits on a point, so the small preview and the full picture look alike.
 - **A fixed size, stretched.** The scope picture is always the same size (the waveform is at most 256 x 256, the vectorscope 128 x 128) and the canvas stretches it, so nothing depends on how wide the sidebar is.
 
-The UI side lives in `main.cpp` and is small:
+The UI side lives in `app/auto_tone_hist.hpp` (`computeHistogram()`, `cycleScope()`) and `app/shell/histogram_view.hpp` and is small:
 
 - **State.** `state.scopeKind` (which view) and `state.scopeImage` (the waveform or vectorscope picture). `computeHistogram()` fills `scopeImage` for the current view with `scopes::render`; it is null while the histogram is showing, so the histogram view does no extra work and the golden histogram scenarios (which call `computeHistogram()` with the default view) are unchanged.
 - **The click.** `cycleScope()` moves to the next view, calls `computeHistogram()` (which rebuilds the picture and bumps `histVersion`, so the canvas repaints) and marks the canvas dirty. It does nothing without a picture.
@@ -322,7 +479,7 @@ The UI side lives in `main.cpp` and is small:
 
 ## Where state lives
 
-All editor state is one global `state` (an `EditorState`) in `main.cpp`, touched only by the UI thread. The edit values live in `state.adjust` (an `AdjustmentSet`), which also owns the undo history. See [undo-and-history.md](undo-and-history.md). Edits are written to disk by [the sidecar](sidecar-format.md). The 16-bit twins (`original16`, `oriented16`, `rotated16`, `source16`, `previewBase16`) are null for an 8-bit file. The open picture's rating, flag and label are `state.meta`, its camera data is `state.photoInfo`, what the file says about its color space is `state.colorTag`, and the filter bar's state is `state.film.filter`; none of them is an edit. Other UI-side state is the Presets pane's list of preset files (a cache of what is in the presets folder), the Copy Settings clipboard (one `Preset` held in memory) and the filmstrip's multi-selection (a flag on each `FilmEntry`, plus the anchor of a Shift-click range). The white-balance picker's armed flag (`state.wbPicking`) is plain UI state and is never saved, and so are the pinned canvas's view (`state.scopeKind`) and its scope picture (`state.scopeImage`). The LUTs pane keeps two pieces of UI-side state: the list of the library's files with their previews (`gLuts`), and a record of what the previews were made for (`gLutBuilt`); a picture's own LUT lives in `state.adjust` (`AdjustmentSet::lut()`), and the library's table cache is a mutex-guarded global in `io/lut_library.hpp`. Presets themselves live in files, not in `state`; applying one, or pasting the clipboard, copies its values into `state.adjust`. Sync Settings never touches `state.adjust` for the pictures it writes to.
+All editor state is one global `state` (an `EditorState`, in `app/editor_state.hpp`), touched only by the UI thread. The edit values live in `state.adjust` (an `AdjustmentSet`), which also owns the undo history. See [undo-and-history.md](undo-and-history.md). Edits are written to disk by [the sidecar](sidecar-format.md). The 16-bit twins (`original16`, `oriented16`, `rotated16`, `source16`, `previewBase16`) are null for an 8-bit file. The open picture's rating, flag and label are `state.meta`, its camera data is `state.photoInfo`, what the file says about its color space is `state.colorTag`, and the filter bar's state is `state.film.filter`; none of them is an edit. Other UI-side state is the Presets pane's list of preset files (a cache of what is in the presets folder), the Copy Settings clipboard (one `Preset` held in memory) and the filmstrip's multi-selection (a flag on each `FilmEntry`, plus the anchor of a Shift-click range). The white-balance picker's armed flag (`state.wbPicking`) is plain UI state and is never saved, and so are the pinned canvas's view (`state.scopeKind`) and its scope picture (`state.scopeImage`). The LUTs pane keeps two pieces of UI-side state: the list of the library's files with their previews (`gLuts`), and a record of what the previews were made for (`gLutBuilt`); a picture's own LUT lives in `state.adjust` (`AdjustmentSet::lut()`), and the library's table cache is a mutex-guarded global in `io/lut_library.hpp`. Presets themselves live in files, not in `state`; applying one, or pasting the clipboard, copies its values into `state.adjust`. Sync Settings never touches `state.adjust` for the pictures it writes to.
 
 ## The rule about threads
 
@@ -330,11 +487,11 @@ Workers never read `state` and never call LiteUI. They receive an immutable pict
 
 ## Tests and the safety net
 
-The engine has no UI, so every header has its own test file: 54 `.inc` files in `tests/cases/` (one per engine header, plus `lut_render`, which tests the LUT through the renderer), all included into one translation unit, `tests/literoom_test.cpp`, that is built as the single Catch2 executable `literoom_test`. Two more programs stand apart (the golden render test and the LUT-pane test, below). They are built and run from the **liteui root**, not from `examples/literoom`, because literoom's `CMakeLists.txt` refuses to configure on its own. How to run them, what each one covers and where a new one belongs are in [testing.md](testing.md).
+The engine has no UI, so every header has its own test file: 54 `.inc` files in `tests/cases/` (one per engine header, plus `lut_render`, which tests the LUT through the renderer), all included into one translation unit, `tests/literoom_test.cpp`, that is built as the single Catch2 executable `literoom_test`. Two more programs stand apart (the golden render test and the LUT-pane test, below). They are built and run with the CMake presets from the repository root (`ctest --preset gcc-release`, or `msvc-release` on Windows). How to run them, what each one covers and where a new one belongs are in [testing.md](testing.md).
 
 Four things shape how the code is organized:
 
 - **Layers are enforced by the build.** `src/` is the only include path (the test targets add `tests/` for the `.inc` files and `check.hpp`), so a test includes a header exactly as the app does. Headers are picked up with a `CONFIGURE_DEPENDS` glob, and a new test is a new `.inc` plus one `#include` in `literoom_test.cpp`: nothing to edit in `CMakeLists.txt`.
-- **The golden render test.** It compiles `src/main.cpp` itself (with `main()` renamed) and fingerprints every render scenario: sliders, masks, geometry, undo, the sidecar, the histogram. It is the net for refactoring `main.cpp`, which the unit tests cannot reach. The fingerprints are float-exact, so there is one golden file per compiler and configuration (`tests/golden/render_<compiler>_<config>.txt`), the test never runs under sanitizers, and a missing file makes it report "skipped" (exit code 77) rather than failed (`ctest -LE golden` leaves it out). It renders 8-bit pictures only.
+- **The golden render test.** It compiles `src/main.cpp` itself (with `main()` renamed) and fingerprints every render scenario: sliders, masks, geometry, undo, the sidecar, the histogram. It is the net for refactoring the UI code under `app/` (compiled through `main.cpp`), which the unit tests cannot reach. The fingerprints are float-exact, so there is one golden file per compiler and configuration (`tests/golden/render_<compiler>_<config>.txt`), the test never runs under sanitizers, and a missing file makes it report "skipped" (exit code 77) rather than failed (`ctest -LE golden` leaves it out). It renders 8-bit pictures only.
 - **The LUT-pane test.** `tests/lut_pane_test.cpp` also compiles `main.cpp` itself and drives the LUTs pane's logic against a real temp library, the real preview worker and the real renderer, on the `check.hpp` harness. Its CTest label is `threaded`, like the Catch2 cases that start threads (`ctest -L threaded --repeat until-fail:50` shakes out timing flakiness).
 - **`render_bytes.hpp` is a test reference.** `cases/render_core.inc` compares the float pipeline against it, and it holds the only tests of the 16-bit paths, so deleting it removes that reference.

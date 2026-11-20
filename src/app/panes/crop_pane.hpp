@@ -14,7 +14,7 @@ static View buildCropPane() {
   cropPane.style.direction = FlexDirection::Column;
   cropPane.style.gap = 6.0f;
   cropPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 2 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kCropActivity ? Display::Flex : Display::None; });
 
   Text cropHint;
   cropHint.label = std::function<std::string()>([]() -> std::string {

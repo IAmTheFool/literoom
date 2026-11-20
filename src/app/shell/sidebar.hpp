@@ -18,7 +18,7 @@ static View buildSidebar(const std::vector<Activity> &activities, View &maskEdit
   sidebarShell.style.overflowX = Overflow::Hidden;
   sidebarShell.style.overflowY = Overflow::Visible;
   sidebarShell.style.width = std::function<Size()>([] {
-    return Size::pixel(state.activeActivity != -1 ? state.sidebarWidth : 0.0f);
+    return Size::pixel(state.activeActivity != kNoActivity ? state.sidebarWidth : 0.0f);
   });
 
   // Body: all the panes live here, and this is the part that scrolls.

@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Literoom
-Comment=A small literoom app
+Comment=Lightweight, non-destructive photo editor
 Exec=literoom
 Icon=literoom
 Terminal=false
-Categories=Utility;
+Categories=Graphics;Photography;

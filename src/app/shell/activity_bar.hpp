@@ -32,9 +32,10 @@ static View buildActivityBar(const std::vector<Activity> &activities) {
                                         : kColorActivityBarBg;
     });
     button.onClick = [id] {
-      state.activeActivity = (state.activeActivity == id) ? -1 : id;
+      state.activeActivity = (state.activeActivity == id) ? kNoActivity : id;
       // The wheels are laid out for a minimum sidebar width.
-      if (state.activeActivity == 6 && state.sidebarWidth < kGradePaneW)
+      if (state.activeActivity == kColorGradingActivity &&
+          state.sidebarWidth < kGradePaneW)
         state.sidebarWidth = kGradePaneW;
       state.markDirty(); // show/hide the crop overlay
     };

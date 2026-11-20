@@ -41,7 +41,7 @@ static View buildHistogramView() {
   };
   histogram.canvasDirtySource = [] {
     static uint32_t lastPainted = 0;
-    static int lastActivity = -2;
+    static int lastActivity = kNeverSeenActivity;
     // Sidebar is polled before the canvas: do the pending recompute now.
     refreshHistogramIfStale();
     // Also repaint when the sidebar is switched or reopened, in case it

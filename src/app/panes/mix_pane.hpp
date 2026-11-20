@@ -15,7 +15,7 @@ static View buildMixPane() {
   mixPane.style.direction = FlexDirection::Column;
   mixPane.style.gap = 12.0f;
   mixPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 5 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kColorMixActivity ? Display::Flex : Display::None; });
 
   View mixTabs;
   mixTabs.style.direction = FlexDirection::Row;

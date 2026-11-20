@@ -21,8 +21,9 @@ constexpr float kMaskTrackW = 240.0f;  // slider track length in that panel
                                        // (kMinMaskPanelW - 2 * pad - scrollbar
                                        // must stay >= this)
 
-// Zoom range/step. Zoom is measured in DEVICE pixels (see EditorState::zoomDev):
-// 1.0 = one image pixel per physical screen pixel, on any display scale.
+// Zoom range/step. Zoom is measured in DEVICE pixels (see
+// EditorState::zoomDev): 1.0 = one image pixel per physical screen pixel, on
+// any display scale.
 constexpr float kZoomMin = 0.1f;
 constexpr float kZoomMax = 8.0f;
 constexpr float kZoomStep = 1.25f;
@@ -61,19 +62,8 @@ constexpr float kCurveTabW =
 constexpr float kPlaceholderW = 800.0f;
 constexpr float kPlaceholderH = 600.0f;
 
-// Activity id of the History panel (see the activities list in main).
-constexpr int kHistoryActivity = 9;
-// Activity id of the Presets panel, and how many preset rows it can show (the
-// view tree is built once, like the mask and history lists).
-constexpr int kPresetsActivity = 10;
 constexpr size_t kPresetRows = 24;
-// Activity id of the Snapshots panel. It has kMaxSnapshots rows (sidecar.hpp);
-// the view tree is built once, like the preset and history lists.
-constexpr int kSnapshotsActivity = 11;
 
-// Activity id of the LUTs panel. Like the preset list, its view tree is built
-// once, with a row for every LUT the library can hold (kLutMaxFiles).
-constexpr int kLutsActivity = 12;
 constexpr size_t kLutRows = kLutMaxFiles;
 constexpr float kLutRowH =
     kFilmThumbH + 12.0f; // a row with its preview of the picture
@@ -170,3 +160,20 @@ static Color mixBandColor(size_t band) {
   return colors[band];
 }
 
+enum ActivityId : int {
+  kNeverSeenActivity = -2, // sentinel for "no tab observed yet"; never a real state
+  kNoActivity = -1,
+  kInfoActivity = 0,
+  kAdjustActivity = 1,
+  kCropActivity = 2,
+  kRotateActivity = 3,
+  kCurveActivity = 4,
+  kColorMixActivity = 5,
+  kColorGradingActivity = 6,
+  kMasksActivity = 7,
+  kExportActivity = 8,
+  kHistoryActivity = 9,
+  kPresetsActivity = 10,
+  kSnapshotsActivity = 11,
+  kLutsActivity = 12,
+};

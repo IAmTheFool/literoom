@@ -12,7 +12,7 @@ static View buildInfoPane() {
   infoPane.style.width = Size::full();
   infoPane.style.gap = 6.0f;
   infoPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == 0 ? Display::Flex : Display::None; });
+      [] { return state.activeActivity == kInfoActivity ? Display::Flex : Display::None; });
 
   Text infoName;
   infoName.label = std::function<std::string()>([] {
