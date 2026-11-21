@@ -12,6 +12,12 @@ env:
   # against; bump it here and nowhere else.
   ORT_VERSION: "1.31.1"
 
+  # ONNX Runtime on/off for release builds ("ON" or "OFF").
+  # Set the repo variable LITEROOM_ONNX (Settings > Secrets and variables >
+  # Actions > Variables) to OFF to build without it. If the variable is not
+  # set, this defaults to ON. You can also just change 'ON' below.
+  LITEROOM_ONNX: ${{ vars.LITEROOM_ONNX || 'OFF' }}
+
 jobs:
   package:
     name: package ${{ matrix.os }}
@@ -29,8 +35,14 @@ jobs:
           # in LFS this downloads the real files instead of tiny pointer files.
           lfs: true
 
+      - name: Show ONNX setting
+        shell: bash
+        run: echo "LITEROOM_ONNX=$LITEROOM_ONNX"
+
       # Fail early, with a clear message, if the models aren't really there.
+      # Only needed when ONNX is enabled.
       - name: Check MobileSAM models
+        if: env.LITEROOM_ONNX == 'ON'
         shell: bash
         run: |
           for f in models/mobile_sam.encoder.onnx models/mobile_sam.decoder.onnx; do
@@ -59,11 +71,11 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
 
-      # ---- ONNX Runtime: download the official CPU build ----
+      # ---- ONNX Runtime: download the official CPU build (ONNX=ON only) ----
       # Both steps export ONNXRUNTIME_DIR (the folder that contains include/
       # and lib/) for the configure step below.
       - name: Download ONNX Runtime (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.LITEROOM_ONNX == 'ON'
         shell: pwsh
         run: |
           $v = $env:ORT_VERSION
@@ -73,17 +85,18 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "ONNXRUNTIME_DIR=$dir"
 
       - name: Download ONNX Runtime (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.LITEROOM_ONNX == 'ON'
         run: |
           curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
           mkdir ort
           tar -xzf ort.tgz -C ort
           echo "ONNXRUNTIME_DIR=$PWD/ort/onnxruntime-linux-x64-${ORT_VERSION}" >> "$GITHUB_ENV"
 
-      # -D on the command line overrides the preset. The build copies
-      # onnxruntime*.dll (Windows) and models/ next to the executable.
+      # -D on the command line overrides the preset. With ONNX=ON the build
+      # copies onnxruntime*.dll (Windows) and models/ next to the executable.
+      # With ONNX=OFF, ONNXRUNTIME_DIR is empty and CMake ignores it.
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -DLITEROOM_ONNX=ON -DONNXRUNTIME_DIR="${{ env.ONNXRUNTIME_DIR }}"
+        run: cmake --preset ${{ matrix.preset }} -DLITEROOM_ONNX=${{ env.LITEROOM_ONNX }} -DONNXRUNTIME_DIR="${{ env.ONNXRUNTIME_DIR }}"
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -97,6 +110,7 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $onnx = ($env:LITEROOM_ONNX -eq 'ON')
 
           # onnxruntime.dll needs the Visual C++ runtime (MSVCP140 / VCRUNTIME140),
           # which a clean Windows machine may not have. Ship those four DLLs
@@ -109,11 +123,13 @@ jobs:
 
           New-Item -ItemType Directory -Force dist | Out-Null
 
-          # Zip: exe + all DLLs + models, inside a literoom/ folder.
+          # Zip: exe + all DLLs (+ models when ONNX is on), inside a literoom/ folder.
           New-Item -ItemType Directory -Force stage/literoom | Out-Null
           Copy-Item build/release/literoom.exe stage/literoom/
           Copy-Item build/release/*.dll stage/literoom/
-          Copy-Item build/release/models stage/literoom/models -Recurse
+          if ($onnx) {
+            Copy-Item build/release/models stage/literoom/models -Recurse
+          }
           Compress-Archive -Path stage/literoom -DestinationPath dist/literoom-windows-x64.zip
 
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -122,8 +138,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-          # literoom.iss picks up the DLLs and models from build/release.
-          & $iscc "/DMyAppVersion=$version" packaging/windows/literoom.iss
+          # literoom.iss picks up the DLLs from build/release, and the models
+          # too when /DWithModels is defined (ONNX=ON). Wrap the models line in
+          # the .iss with "#ifdef WithModels" ... "#endif".
+          $isccArgs = @("/DMyAppVersion=$version")
+          if ($onnx) { $isccArgs += "/DWithModels" }
+          $isccArgs += "packaging/windows/literoom.iss"
+          & $iscc @isccArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item build/installer/literoom-setup-x64.exe dist/
 
@@ -137,8 +158,9 @@ jobs:
           mkdir -p dist cpack-out stage
 
           # Tarball: install into a staging folder using the same install rules
-          # the .deb uses (launcher, binary, libonnxruntime, models), then tar
-          # it up. It runs from wherever it is extracted: bin/literoom.
+          # the .deb uses (launcher, binary, libonnxruntime and models when ONNX
+          # is on), then tar it up. It runs from wherever it is extracted:
+          # bin/literoom.
           cmake --install build/release --prefix stage/literoom
           tar -czf dist/literoom-linux-x64.tar.gz -C stage literoom
 
