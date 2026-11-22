@@ -57,6 +57,15 @@ if(WIN32)
     target_sources(literoom PRIVATE ${LITEROOM_RC})
     set_source_files_properties(${LITEROOM_RC} PROPERTIES
         OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/literoom.ico)
+
+    # GUI subsystem: no console window. Debug builds keep the console so
+    # stdout/stderr stay visible while developing. /ENTRY:mainCRTStartup lets
+    # us keep a plain main() instead of WinMain.
+    if(MSVC)
+        target_link_options(literoom PRIVATE
+            $<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS>
+            $<$<NOT:$<CONFIG:Debug>>:/ENTRY:mainCRTStartup>)
+    endif()
 endif()
 
 # Same folder tree in Visual Studio's Solution Explorer.
