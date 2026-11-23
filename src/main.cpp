@@ -57,6 +57,7 @@
 #include "io/minijson.hpp"
 #include "io/photo_meta.hpp"
 #include "io/preset.hpp"
+#include "io/sidecar_file.hpp"
 
 // edit state and rendering
 #include "edit/adjustment_set.hpp"

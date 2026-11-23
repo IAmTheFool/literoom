@@ -16,7 +16,8 @@
 // damaged one, one from a newer version, or one written for a different-sized
 // picture is ignored (the editor starts clean) and the status bar says so.
 // Opening a picture and touching nothing writes nothing. The undo history is
-// not saved.
+// not saved, but what is saved is the NEWEST history step (latestToJson), so
+// stepping back to "Original" and closing the app keeps the edits above it.
 
 static std::filesystem::path sidecarPath(const std::string &imagePath) {
   return fsPath(sidecarFileOf(imagePath));
@@ -101,7 +102,7 @@ static void saveSidecar() {
   const std::string text =
       sidecarFileText(baseName(vcImageOf(state.imagePath)),
                       state.original->width, state.original->height,
-                      state.adjust.toJson(), state.meta, state.snapshots);
+                      state.adjust.latestToJson(), state.meta, state.snapshots);
 
   const std::filesystem::path path = sidecarPath(state.imagePath);
   std::filesystem::path tmp = path;

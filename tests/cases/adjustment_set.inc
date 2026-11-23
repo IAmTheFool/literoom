@@ -407,8 +407,10 @@ TEST_CASE("adjustment_set: json", "[adjustment_set]")
   CHECK((b.orient() == (Orient{1, false}) && b.angle() == 4.5f && b.curve(CurveChannel::Blue) == a.curve(CurveChannel::Blue)));
   CHECK((b.mix(MixChan::Saturation, 2) == -15.0f && b.grade() == a.grade() && b.masks().size() == 1));
   CHECK(b.toJson().dump() == text);
-  // The undo history starts again from what was loaded.
-  CHECK((b.historySize() == 1 && !b.canUndo() && label(b, 0) == "Original"));
+  // The undo history starts again from what was loaded: step 0 is the untouched picture, step 1
+  // the saved edits, and the picture is on step 1.
+  CHECK((b.historySize() == 2 && b.historyIndex() == 1 && b.canUndo()));
+  CHECK((label(b, 0) == "Original" && label(b, 1) == "Saved edits"));
   b.set(AdjId::Hue, 5.0f);
   b.undo();
   CHECK((b.get(AdjId::Exposure) == 25.0f && b.get(AdjId::Hue) == 0.0f));
@@ -662,7 +664,50 @@ TEST_CASE("adjustment_set: whiteBalancePick", "[adjustment_set]")
   AdjustmentSet r;
   fresh(r);
   CHECK((r.loadJson(s.toJson()) && r.get(AdjId::Temperature) == s.get(AdjId::Temperature)));
-  CHECK(r.historySize() == 1);
+  CHECK(r.historySize() == 2); // the untouched picture, then the saved edits
+}
+
+TEST_CASE("adjustment_set: savedEditsAndLatestStep", "[adjustment_set]")
+{
+  AdjustmentSet a;
+  fresh(a);
+  a.set(AdjId::Exposure, 25.0f);
+  const mj::Json saved = a.toJson();
+
+  // Loading a file with real edits gives two steps, opened on the saved one.
+  AdjustmentSet b;
+  fresh(b);
+  CHECK(b.loadJson(saved));
+  CHECK((b.historySize() == 2 && b.historyIndex() == 1 && label(b, 0) == "Original" && label(b, 1) == "Saved edits"));
+  // At the newest step the sidecar text is the current state.
+  CHECK(b.latestToJson().dump() == saved.dump());
+
+  // Stepping back to Original shows the untouched picture, but what the sidecar stores is still the
+  // newest step: closing the app there must not lose the edits.
+  b.goToHistory(0);
+  CHECK((b.get(AdjId::Exposure) == 0.0f && b.toJson().dump() != saved.dump()));
+  CHECK(b.latestToJson().dump() == saved.dump());
+  CHECK(b.latestEdits().values[static_cast<size_t>(AdjId::Exposure)] == 25.0f);
+
+  // Undo / redo are the same kind of step back: the newest step stays what is stored.
+  b.redo();
+  CHECK((b.get(AdjId::Exposure) == 25.0f && b.latestToJson().dump() == saved.dump()));
+  b.undo();
+  CHECK(b.latestToJson().dump() == saved.dump());
+
+  // A new edit made after stepping back discards the steps ahead; the new edit is then the newest step.
+  b.set(AdjId::Contrast, 10.0f);
+  CHECK((b.historySize() == 2 && b.get(AdjId::Exposure) == 0.0f));
+  CHECK(b.latestToJson().dump() == b.toJson().dump());
+  CHECK(b.latestToJson().dump() != saved.dump());
+
+  // A file that holds nothing (a rating alone) stays a single step: there is nothing to step back to.
+  AdjustmentSet n;
+  fresh(n);
+  const mj::Json neutral = n.toJson();
+  AdjustmentSet m;
+  fresh(m);
+  CHECK((m.loadJson(neutral) && m.historySize() == 1 && !m.canUndo() && label(m, 0) == "Original"));
 }
 
 TEST_CASE("adjustment_set: autoTonePick", "[adjustment_set]")
@@ -734,7 +779,7 @@ TEST_CASE("adjustment_set: autoTonePick", "[adjustment_set]")
   AdjustmentSet r;
   fresh(r);
   CHECK((r.loadJson(s.toJson()) && r.get(AdjId::Whites) == s.get(AdjId::Whites)));
-  CHECK((r.get(AdjId::Blacks) == s.get(AdjId::Blacks) && r.historySize() == 1));
+  CHECK((r.get(AdjId::Blacks) == s.get(AdjId::Blacks) && r.historySize() == 2));
 }
 
 TEST_CASE("adjustment_set: snapshotRestore", "[adjustment_set]")
@@ -952,14 +997,14 @@ TEST_CASE("adjustment_set: lut", "[adjustment_set]")
   CHECK((m.setLut(LutRef{"Warm", 8}) && m.lutStatus() == LutStatus::HashChanged && m.buildColorPass().lut.any()));
   CHECK((m.setLut(LutRef{"Warm", 0}) && m.lutStatus() == LutStatus::Ok)); // hash 0 = unknown: accepts the file
 
-  // Save + load: the reference and the amount come back, history starts from them.
+  // Save + load: the reference and the amount come back; history is the untouched picture, then them.
   const mj::Json j = s.toJson();
   const mj::Json *lj = j.find("lut");
   CHECK((lj && lj->isObject() && lj->get("name").asStr() == "Warm" && lj->get("hash").asStr() == lutHashToHex(7)));
   AdjustmentSet r;
   fresh(r);
   CHECK((r.loadJson(j) && r.lut() == LutRef{"Warm", 7} && r.get(AdjId::LutAmount) == 60.0f));
-  CHECK((r.historySize() == 1 && r.toJson().dump() == j.dump()));
+  CHECK((r.historySize() == 2 && r.toJson().dump() == j.dump()));
   CHECK(r.currentEdits().lut == LutRef{"Warm", 7});
   r.reset();
   CHECK((r.lut().empty() && r.get(AdjId::LutAmount) == 0.0f));

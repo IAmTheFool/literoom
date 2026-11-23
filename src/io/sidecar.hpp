@@ -882,6 +882,49 @@ inline SidecarScan sidecarScan(const std::string &text)
 }
 
 
+// The checks every reader of a sidecar's text makes first, in one place (the
+// editor's loadSidecar, export's exportLoadEdits and sidecarReadForRewrite all
+// use it): the text parses as a JSON object, is not from a newer Literoom, and
+// records a picture size that matches imgW x imgH (when both are > 0). A missing
+// or non-numeric "version" counts as Newer. Pure: reading the file is
+// readSidecarFile's job (io/sidecar_file.hpp). Whether a failure is lenient (the
+// editor opens clean) or strict (export skips the picture) is the caller's call.
+enum class SidecarCheck
+{
+  Ok,
+  Unparsable,  // not JSON, or not a JSON object (head.parseError may say why)
+  Newer,       // written by a newer Literoom
+  NoSize,      // no "image" width / height recorded
+  SizeChanged, // recorded for a picture of another size
+};
+struct SidecarHead
+{
+  mj::Json root;          // the parsed file (set once past Unparsable)
+  int width = 0, height = 0; // the picture size the file records (past NoSize)
+  std::string parseError; // Unparsable: the parser's reason, if it gave one
+};
+inline SidecarCheck sidecarCheckText(const std::string &text, int imgW,
+                                     int imgH, SidecarHead *out)
+{
+  using mj::Json;
+  *out = SidecarHead{};
+  if (!Json::parse(text, &out->root, &out->parseError) || !out->root.isObject())
+    return SidecarCheck::Unparsable;
+  const Json *ver = out->root.find("version");
+  if (!ver || !ver->isNumber() || ver->asNum(0) > kSidecarVersion)
+    return SidecarCheck::Newer;
+  const Json *img = out->root.find("image");
+  const Json *jw = img && img->isObject() ? img->find("width") : nullptr;
+  const Json *jh = img && img->isObject() ? img->find("height") : nullptr;
+  if (!jw || !jh)
+    return SidecarCheck::NoSize;
+  out->width = static_cast<int>(jw->asNum(-1));
+  out->height = static_cast<int>(jh->asNum(-1));
+  if (imgW > 0 && imgH > 0 && (out->width != imgW || out->height != imgH))
+    return SidecarCheck::SizeChanged;
+  return SidecarCheck::Ok;
+}
+
 // The picture's own rating / flag / color label and snapshots are kept.
 // Returns false, with a reason in *err and *outText untouched, when the old
 // file can't be trusted (unreadable, from a newer version, other size): the
@@ -916,22 +959,23 @@ inline bool sidecarReadForRewrite(const std::string &oldText, int imgW, int imgH
   *H = imgH;
   if (oldText.empty())
     return *W > 0 && *H > 0 ? true : fail("the picture's size is unknown");
-  Json root;
-  std::string perr;
-  if (!Json::parse(oldText, &root, &perr) || !root.isObject())
+  SidecarHead head;
+  switch (sidecarCheckText(oldText, imgW, imgH, &head))
+  {
+  case SidecarCheck::Ok:
+    break;
+  case SidecarCheck::Unparsable:
     return fail("its saved edits are unreadable");
-  const Json *ver = root.find("version");
-  if (!ver || !ver->isNumber() || ver->asNum(0) > kSidecarVersion)
+  case SidecarCheck::Newer:
     return fail("its saved edits are from a newer Literoom");
-  const Json *img = root.find("image");
-  const Json *jw = img && img->isObject() ? img->find("width") : nullptr;
-  const Json *jh = img && img->isObject() ? img->find("height") : nullptr;
-  if (!jw || !jh)
+  case SidecarCheck::NoSize:
     return fail("its saved edits have no picture size");
-  const int fw = static_cast<int>(jw->asNum(-1));
-  const int fh = static_cast<int>(jh->asNum(-1));
-  if (imgW > 0 && imgH > 0 && (fw != imgW || fh != imgH))
+  case SidecarCheck::SizeChanged:
     return fail("the picture's size has changed");
+  }
+  const Json &root = head.root;
+  const int fw = head.width;
+  const int fh = head.height;
   const Json *edits = root.find("edits");
   if (!edits || !sidecarEditsFromJson(*edits, fw, fh, e))
     return fail("its saved edits are unreadable");

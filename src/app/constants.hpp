@@ -64,7 +64,7 @@ constexpr float kPlaceholderH = 600.0f;
 
 constexpr size_t kPresetRows = 24;
 
-constexpr size_t kLutRows = kLutMaxFiles;
+constexpr size_t kLutRows = kLutMaxFiles; 
 constexpr float kLutRowH =
     kFilmThumbH + 12.0f; // a row with its preview of the picture
 constexpr float kLutRowNamesH =

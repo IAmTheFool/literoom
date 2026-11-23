@@ -5,6 +5,8 @@
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+#include "io/sidecar_file.hpp" // readSidecarFile
+
 #include <exception>
 #include <new>
 
@@ -54,32 +56,6 @@ struct SyncResult {
   std::vector<SyncOutcome> items;
 };
 
-// Largest sidecar a sync will read: the same limit the editor puts on one.
-constexpr std::streamoff kSyncMaxSidecarBytes = std::streamoff{64} << 20;
-
-// 1 = text read, 0 = no sidecar, -1 = unreadable or too big. Any thread.
-// "No sidecar" means the file is not there; a file that is there but can't be
-// opened is -1, never 0 (see "Failure handling").
-static int readSidecarText(const std::string &imagePath, std::string *text) {
-  const std::filesystem::path p = sidecarPath(imagePath);
-  std::error_code ec;
-  const bool exists = std::filesystem::exists(p, ec);
-  if (ec)
-    return -1; // can't even tell: don't guess "absent"
-  if (!exists)
-    return 0;
-  std::ifstream f(p, std::ios::binary | std::ios::ate);
-  if (!f)
-    return -1; // there, but can't be opened
-  const std::streamoff n = f.tellg();
-  if (n <= 0 || n > kSyncMaxSidecarBytes)
-    return -1;
-  text->assign(static_cast<size_t>(n), '\0');
-  f.seekg(0);
-  f.read(text->data(), n);
-  return f ? 1 : -1;
-}
-
 // Temp file, then rename, like saveSidecar. Any thread.
 static bool writeTextAtomic(const std::filesystem::path &path,
                             const std::string &text, std::string *err) {
@@ -115,19 +91,21 @@ static SyncOutcome syncOne(SyncJob &job, const std::string &path) {
   o.path = path;
   std::string old;
   int w = 0, h = 0;
-  const int have = readSidecarText(path, &old);
-  if (have == 0 && job.metaOnly &&
+  // Absent / Ok are the only states we can rewrite from. Anything else (an
+  // unreadable, empty or oversized file) is skipped, never treated as absent.
+  const SidecarRead have = readSidecarFile(path, &old);
+  if (have == SidecarRead::Absent && job.metaOnly &&
       job.patch.applyTo(PhotoMeta{})
           .isDefault()) { // nothing to record and no file to change: not
                           // worth a decode
     o.ok = true;
     return o;
   }
-  if (have < 0) {
+  if (have != SidecarRead::Absent && have != SidecarRead::Ok) {
     o.error = "couldn't read its saved edits";
     return o;
   }
-  if (have == 0) { // no sidecar yet: record the picture's (upright) size
+  if (have == SidecarRead::Absent) { // no sidecar yet: record the picture's (upright) size
     std::string derr;
     if (!image_source::uprightSize(vcImageOf(path),
                                    exifOrientationOf(vcImageOf(path)), &w, &h,

@@ -554,7 +554,7 @@ TEST_CASE("thumb_worker: unusableSidecarCountsAsEdited", "[thumb_worker][threade
     std::ofstream f(fsPath(sidecarFileOf(empty)), std::ios::binary); // zero bytes
   }
   std::error_code ec;
-  std::filesystem::resize_file(fsPath(sidecarFileOf(big)), kThumbMaxSidecarBytes + 1, ec);
+  std::filesystem::resize_file(fsPath(sidecarFileOf(big)), kMaxSidecarBytes + 1, ec);
   CHECK(!ec);
   Latch notified;
   ThumbWorker w(orientFromExif);

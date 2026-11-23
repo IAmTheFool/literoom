@@ -42,7 +42,7 @@ Every header sits under `src/`, which is the include root, so a header is always
 | `mask/` | `mask`, `mask_geom`, `mask_range`, `mask_rect`, `mask_polygon`, `mask_raster`, `mask_brush`, `mask_object`, `seg_basic`, `sam_segmenter` |
 | `edit/` | `adjustment_set`, `render_params` |
 | `render/` | `render`, `render_core`, `render_bytes`, `histogram`, `scopes` |
-| `io/` | `sidecar`, `photo_meta`, `preset`, `virtual_copy`, `minijson`, `file_utils`, `image_codec`, `image_codec16`, `image_source`, `exif`, `image_meta`, `color_tag`, `lut_cube`, `lut_library` |
+| `io/` | `sidecar`, `sidecar_file`, `photo_meta`, `preset`, `virtual_copy`, `minijson`, `file_utils`, `image_codec`, `image_codec16`, `image_source`, `exif`, `image_meta`, `color_tag`, `lut_cube`, `lut_library` |
 | `workers/` | `latest_worker`, `thumb_worker`, `export_render`, `export_worker`, `lut_preview_worker` |
 | `app/` | not engine, so no entries below: the UI shell, split out of `main.cpp` into headers that only `main.cpp` includes (see [architecture.md](architecture.md#app-and-maincpp); every file, type and function is documented in [app-headers.md](app-headers.md)) |
 | `tests/` | `check.hpp` (used by `lut_pane_test.cpp`), `literoom_test.cpp` with `cases/*.inc`, `golden_render_test.cpp` with `golden/`, and `lut_pane_test.cpp` |
@@ -409,7 +409,7 @@ Auto Tone: turns a luma histogram into values for Exposure, Contrast, Whites and
 **Named snapshots** (a saved copy of the *whole* edit state; the list is `EditorState::snapshots` in `app/editor_state.hpp`, see [undo-and-history.md](undo-and-history.md#named-snapshots) and [`sidecar.hpp`](#sidecarhpp))
 
 **`SidecarEdits currentEdits() const`**
-- The whole edit state as a plain value: sliders, crop, orientation, angle, corner mode, curves, Mixer, grade, masks and the LUT. This is what `toJson()` writes and what *Save snapshot* stores. Does not touch the history or `version()`. It builds the struct field by field, so a new field of `SidecarEdits` must be added here.
+- The whole edit state as a plain value: sliders, crop, orientation, angle, corner mode, curves, Mixer, grade, masks and the LUT. This is what `toJson()` writes and what *Save snapshot* stores. (The sidecar file itself is written from `latestEdits()`, below.) Does not touch the history or `version()`. It builds the struct field by field, so a new field of `SidecarEdits` must be added here.
 
 **`bool restoreEdits(const SidecarEdits &e, const std::string &name)`**
 - Puts the picture back exactly as `e` describes it as **one undo step**. Unlike `applyPreset` it replaces the geometry (crop, orientation, angle, corner mode) and the masks too, so the caller must refresh the picture the way it does after an undo.
@@ -423,10 +423,13 @@ Auto Tone: turns a luma histogram into values for Exposure, Contrast, Whites and
 
 **`void reset()`**: a fresh baseline for a newly opened image: every slider, Mixer value, grade, mask, the LUT, crop, orientation and angle back to neutral, curves to identity, history reduced to that one baseline step.
 
-**`mj::Json toJson() const`**: everything the user has done, as the sidecar JSON (the undo history is not included). Calls `sidecarEditsToJson(currentEdits())`.
+**`mj::Json toJson() const`**: everything the user has done **right now**, as the sidecar JSON (the undo history is not included). Calls `sidecarEditsToJson(currentEdits())`. The saved file uses `latestToJson()` instead (see below).
+
+**`SidecarEdits latestEdits() const`** and **`mj::Json latestToJson() const`**
+- What the **sidecar** stores: the edits of the **newest** history step, which is the current state unless the user has stepped back (undo, a History click). Stepping back is only a way of looking, so closing the app on "Original" must not lose the edits above it. `latestEdits()` returns `currentEdits()` when the current step is the newest, else the last history step's values, crop, orientation, angle, corner mode, curves, Mixer, grade, masks and LUT. `latestToJson()` is `sidecarEditsToJson(latestEdits())`. The first new edit after stepping back discards the newer steps, so from then on the newest step is that edit and is what gets saved. The app's `saveSidecar` writes `latestToJson()`; `toJson()` keeps returning the current state.
 
 **`bool loadJson(const mj::Json &j)`**
-- Replaces every edit with the saved ones (call after `reset()` and `setOriginalSize()`). Returns false with **nothing changed** if `j` isn't usable (not an object, or the original size isn't set). Otherwise the undo history restarts from the loaded state. Everything else is validated and clamped by `sidecarEditsFromJson`.
+- Replaces every edit with the saved ones (call after `reset()` and `setOriginalSize()`). Returns false with **nothing changed** if `j` isn't usable (not an object, or the original size isn't set). Otherwise the undo history restarts from the loaded state: if the edits equal the neutral ones (`sidecarNeutralEditsDump()`, e.g. a file that only holds a rating or snapshots) it is a single baseline step; otherwise it is two steps, "Original" and a step labelled `Saved edits`, and the picture opens on that second step. Everything else is validated and clamped by `sidecarEditsFromJson`.
 
 **Undo, redo and History panel**
 - `bool canUndo() const`, `bool canRedo() const`; **`void undo()`**, **`void redo()`**: move one step and restore it; both end any drag coalescing. No-ops if impossible.
@@ -1794,7 +1797,7 @@ The two views that can replace the histogram in the pinned canvas above the pane
 ## Saving and files
 
 ### `sidecar.hpp`
-The saved edits as JSON. Pure functions on plain values; **loading validates and clamps everything**, so a hand-edited or damaged file can never put the editor in a state its own UI couldn't reach. The undo history is not saved. See [sidecar-format.md](sidecar-format.md). `AdjustmentSet::toJson` / `loadJson` call these functions; the file handling lives next to `openImage`. `preset.hpp` reuses the per-group functions (`sidecarAdjToJson` / `FromJson`, the curve, Mixer and grade ones), so a preset is validated and clamped exactly like a saved edit. `sidecarSyncLook` (last entry below) is how Sync Settings puts a look into another picture's sidecar. The wrapper also carries the picture's **named snapshots** (see below), and `sidecarFileOf` understands a virtual copy's path.
+The saved edits as JSON. Pure functions on plain values; **loading validates and clamps everything**, so a hand-edited or damaged file can never put the editor in a state its own UI couldn't reach. The undo history is not saved. See [sidecar-format.md](sidecar-format.md). `AdjustmentSet::toJson` / `latestToJson` / `loadJson` call these functions; reading the file from disk is [`sidecar_file.hpp`](#sidecar_filehpp), and what to do about a bad one is each caller's policy. `preset.hpp` reuses the per-group functions (`sidecarAdjToJson` / `FromJson`, the curve, Mixer and grade ones), so a preset is validated and clamped exactly like a saved edit. `sidecarSyncLook` (last entry below) is how Sync Settings puts a look into another picture's sidecar. The wrapper also carries the picture's **named snapshots** (see below), and `sidecarFileOf` understands a virtual copy's path.
 
 **Depends on:** `adjustments.hpp`, `color_grade.hpp`, `color_mix.hpp`, `curves.hpp`, `geometry.hpp`, `lut3d.hpp`, `mask.hpp`, `minijson.hpp`, `photo_meta.hpp`, `virtual_copy.hpp`. No UI. **Test:** `cases/sidecar.inc`.
 
@@ -1802,7 +1805,7 @@ The saved edits as JSON. Pure functions on plain values; **loading validates and
 
 | Name | Type | Value | Meaning |
 |---|---|---|---|
-| `kSidecarVersion` | `int` | 1 | Written as `version` by `sidecarFileText`; `sidecarReadForRewrite` (so `sidecarSyncLook` and `sidecarPatchMeta`) refuses a file whose `version` is missing, not a number or higher ("from a newer Literoom"). `sidecarEditsFromJson` itself does not look at it |
+| `kSidecarVersion` | `int` | 1 | Written as `version` by `sidecarFileText`; `sidecarCheckText` (so `sidecarReadForRewrite`, `sidecarSyncLook` and `sidecarPatchMeta`, the editor's `loadSidecar` and export's `exportLoadEdits`) treats a file whose `version` is missing, not a number or higher as `Newer` ("from a newer Literoom"). `sidecarEditsFromJson` itself does not look at it |
 | `kSidecarExt` | `const char *` | `".literoom.json"` | Appended to the picture's path. Defined in `virtual_copy.hpp` (which holds the rest of the file-name rules) and visible here |
 | `kMaxSnapshots` | `size_t` | 20 | Named snapshots kept per picture (written and read) |
 | `kSnapshotNameMax` | `size_t` | 32 | Longest snapshot name |
@@ -1887,7 +1890,7 @@ The saved edits as JSON. Pure functions on plain values; **loading validates and
 
 **Rating, flag and color label** (the wrapper's `meta` object; see [sidecar-format.md](sidecar-format.md)). `sidecar.hpp` includes `photo_meta.hpp`.
 
-**`inline bool sidecarReadForRewrite(const std::string &oldText, int imgW, int imgH, SidecarEdits *e, PhotoMeta *meta, SnapshotList *snaps, int *W, int *H, std::string *err)`**: the trust rules shared by every function that rewrites another picture's sidecar. With no text, the edits are neutral and the size must be given. With text, the file must be a JSON object, not from a newer version, with a picture size that matches `imgW x imgH` (when given) and loadable `edits`; otherwise it is refused with a reason in `*err`. On success it returns the file's edits, `meta`, named snapshots (validated by `sidecarSnapshotsFromJson`, empty if there are none) and size. A rewriter must write `meta` and `snaps` back through `sidecarFileText`, or it would drop them.
+**`inline bool sidecarReadForRewrite(const std::string &oldText, int imgW, int imgH, SidecarEdits *e, PhotoMeta *meta, SnapshotList *snaps, int *W, int *H, std::string *err)`**: the trust rules shared by every function that rewrites another picture's sidecar. With no text, the edits are neutral and the size must be given. With text, it first runs `sidecarCheckText` and then needs loadable `edits`; otherwise it is refused with a reason in `*err`: *"its saved edits are unreadable"* (not a JSON object, or `edits` can't be loaded), *"its saved edits are from a newer Literoom"*, *"its saved edits have no picture size"*, *"the picture's size has changed"*, or *"the picture's size is unknown"* (no text and no size given). When text is present, the picture size recorded in the file is used for the checks on its content. On success it returns the file's edits, `meta`, named snapshots (validated by `sidecarSnapshotsFromJson`, empty if there are none) and size. A rewriter must write `meta` and `snaps` back through `sidecarFileText`, or it would drop them.
 
 **`inline bool sidecarPatchMeta(const std::string &oldText, const std::string &imageName, int imgW, int imgH, const MetaPatch &patch, std::string *outText, PhotoMeta *outMeta, std::string *err)`**: the batch rating. Applies `patch` to the picture's rating / flag / color label in its sidecar text and keeps everything else; same trust rules as `sidecarSyncLook` (both are built on `sidecarReadForRewrite`). `*outMeta` is the meta after the patch. A caller can skip a picture with no sidecar when `patch.applyTo(PhotoMeta{})` is the default, since there is nothing to record. Pure.
 
@@ -1897,7 +1900,27 @@ The saved edits as JSON. Pure functions on plain values; **loading validates and
 
 **`inline const std::string &sidecarNeutralEditsDump()`**: the text `sidecarEditsToJson` gives for an untouched `SidecarEdits{}`.
 
+**`enum class SidecarCheck`** and **`struct SidecarHead { mj::Json root; int width = 0, height = 0; std::string parseError; }`**, with **`inline SidecarCheck sidecarCheckText(const std::string &text, int imgW, int imgH, SidecarHead *out)`**: the checks every reader of a sidecar's text makes first, in one place (the editor's `loadSidecar`, export's `exportLoadEdits` and `sidecarReadForRewrite` all use it). Pure: reading the file is `readSidecarFile`'s job, and whether a failure is lenient (the editor opens the picture clean) or strict (export and Sync skip it) is the caller's call.
+- Checks, in order: the text parses as a JSON object (`Unparsable`; `head.parseError` may give the parser's reason); `version` is a number not above `kSidecarVersion` (a missing or non-numeric one is `Newer`); `image.width` and `image.height` are present (`NoSize`); and, when `imgW` and `imgH` are both positive, they equal the recorded size (`SizeChanged`). Otherwise `Ok`.
+- `*out` is reset first. `out->root` is set once the text has parsed, `width` / `height` once past `NoSize`. A caller that passes `0, 0` for the size accepts whatever size the file records.
+
 **`struct SidecarScan { bool edited = true; PhotoMeta meta; }`** and **`inline SidecarScan sidecarScan(const std::string &text)`**: what the filmstrip wants from a sidecar without opening the picture. `edited` is false only for a file that parses as an object whose `edits` dump equals the neutral dump (a file that exists because the picture was rated, or only has snapshots: `snapshots` is not looked at); an unreadable file, a non-object, or one with no `edits` counts as edited, as any existing file always did. `meta` is the file's rating, flag and label (the default if the file can't be read). Pure; the thumbnail worker calls it on its own thread.
+
+### `sidecar_file.hpp`
+Reading a picture's sidecar file from disk: the **one place** that decides what "the sidecar" is on disk. Which file (`sidecarFileOf`, through `fsPath` so a non-ASCII path survives on Windows), whether it is absent or merely unreadable, and how big a file may be. The editor (`loadSidecar`), Sync Settings, the filmstrip's `ThumbWorker` and the batch export all read through `readSidecarFile`, so a fix here reaches all four. What the text *means* is `sidecar.hpp`'s job (`sidecarCheckText`, then `sidecarEditsFromJson` / `AdjustmentSet::loadJson`). An existing file that can't be opened is `Unreadable`, never `Absent`: treating it as absent would let a caller rebuild the sidecar from nothing and replace the real file, losing crop, rotation and masks.
+
+**Depends on:** `file_utils.hpp` (`fsPath`), `sidecar.hpp` (`sidecarFileOf`). **Test:** no case of its own; it is exercised through the callers' cases (`cases/export_worker.inc`, `cases/thumb_worker.inc`). **Thread model:** any thread.
+
+**Constants:** `kMaxSidecarBytes` (`std::streamoff`) = 64 MiB: the largest sidecar anyone reads (`minijson`'s own input limit is the same). It replaces the former per-caller copies `kThumbMaxSidecarBytes` and `kExportMaxSidecarBytes`.
+
+**Types:** `enum class SidecarRead { Absent, Ok, Empty, TooBig, Unreadable }`
+- `Absent`: no such file (normal for a picture nobody has touched). `Ok`: `*text` holds the file. `Empty`: the file is there and holds nothing (nothing to lose). `TooBig`: over `kMaxSidecarBytes`. `Unreadable`: there, but can't be checked, opened or read.
+
+**Functions**
+
+**`inline SidecarRead readSidecarFile(const std::string &imagePath, std::string *text, std::string *why = nullptr)`**
+- Reads `imagePath`'s sidecar (a virtual copy's path reads that copy's own file). `*text` is filled **only for `Ok`**. For `TooBig` and `Unreadable`, `*why` (if given) gets a short reason for a status line.
+- Steps and results: the existence check fails -> `Unreadable`, *"couldn't check the file"* (can't tell, so it does not guess "absent"); not there -> `Absent`; can't be opened -> `Unreadable`, *"couldn't open the file"*; size negative -> `Unreadable`, *"unexpected file size"*; size 0 -> `Empty`; over `kMaxSidecarBytes` -> `TooBig`, *"unexpected file size"*; the read comes up short -> `Unreadable`, *"couldn't read the file"*; otherwise `Ok`.
 
 ### `photo_meta.hpp`
 A picture's **rating, flag and color label**, their JSON form, and the filmstrip filter. Pure values: no UI, no files, no editor state. They are **not edits**: they never go through `AdjustmentSet`, so there is no undo step or History label. They live in the sidecar's top-level `meta` object (see [sidecar-format.md](sidecar-format.md)).
@@ -2508,13 +2531,13 @@ The filmstrip's thumbnails, made off the UI thread: `makeThumb` box-averages a p
 
 **Failure handling.** No exception leaves the worker thread (an uncaught one in a `std::jthread` is `std::terminate`, and this worker runs on every file of a folder as soon as it is opened). A picture that throws while it is decoded or thumbnailed (`bad_alloc` on a huge file, a library throw on a corrupt one) gets a null `thumb`, exactly like a file that could not be decoded. Its sidecar is read separately, so the "edited" dot and the rating survive a failed decode; and a sidecar that throws counts as edited, like one that is present but unreadable.
 
-**Depends on:** `liteui.hpp` (`CanvasImage`), `image_source.hpp` (`decodeForThumb`), `geometry.hpp`, `raster_ops.hpp` (`orientImage`), `file_utils.hpp` (`fsPath`), `sidecar.hpp` (`sidecarFileOf`, `sidecarScan`), `photo_meta.hpp`, `virtual_copy.hpp` (`vcImageOf`, `vcCopyOf`). **Test:** `cases/thumb_worker.inc`.
+**Depends on:** `liteui.hpp` (`CanvasImage`), `image_source.hpp` (`decodeForThumb`), `geometry.hpp`, `raster_ops.hpp` (`orientImage`), `file_utils.hpp` (`fsPath`), `sidecar.hpp` (`sidecarScan`), `sidecar_file.hpp` (`readSidecarFile`), `photo_meta.hpp`, `virtual_copy.hpp` (`vcImageOf`, `vcCopyOf`). **Test:** `cases/thumb_worker.inc`.
 
-**Constants:** `kFilmThumbW` = 96, `kFilmThumbH` = 72 (`int`). `kThumbMaxSidecarBytes` (`std::streamoff`) = 64 MiB: the largest sidecar the worker reads, the same limit the editor puts on one.
+**Constants:** `kFilmThumbW` = 96, `kFilmThumbH` = 72 (`int`). (The 64 MiB sidecar limit is `kMaxSidecarBytes` in `sidecar_file.hpp`.)
 
 **Functions**
 
-**`inline bool readSidecarForThumb(const std::string &imagePath, std::string *text, bool *exists)`**: the sidecar text of `imagePath` (through `sidecarFileOf`, so a virtual copy reads its own file). `*exists` says whether the file was there at all. Returns false if there is no file, it is empty, it is over `kThumbMaxSidecarBytes` or it can't be read (`*text` is then not filled); the worker counts an existing but unreadable sidecar as edited.
+**`inline bool readSidecarForThumb(const std::string &imagePath, std::string *text, bool *exists)`**: a thin wrapper over `readSidecarFile`, which owns the path (so a virtual copy reads its own file), the size limit and the absent / unreadable rule. `*exists` is true for every result except `Absent` (a file that can't even be checked counts as there, so the worker marks it edited). Returns true only for `SidecarRead::Ok`; false for no file, an empty file, one over `kMaxSidecarBytes` or one that can't be read (`*text` is then not filled). The worker counts an existing but unreadable sidecar as edited.
 
 **`inline std::shared_ptr<const CanvasImage> makeThumb(const CanvasImage &src)`**
 - Returns: a box-averaged copy that fits 96 × 72 (aspect kept, **never enlarged**; each side at least 1). Null for an empty picture or one whose pixel buffer is smaller than `width × height × 4`. All four channels, alpha included, are averaged with rounding.
@@ -2529,7 +2552,7 @@ The filmstrip's thumbnails, made off the UI thread: `makeThumb` box-averages a p
 - **`void setQueue(std::vector<std::string> paths)`**: replaces what is still to do (starting the thread on first use). The file being processed finishes; results already made stay until collected. Call it again whenever the open picture changes so the work starts next to it.
 - **`std::vector<Result> collect()`**: returns everything made since the last call and empties the list. Thread-safe, non-blocking.
 - **`void shutdown()`**: clears the queue, requests stop and joins the thread.
-- Per file, the worker: decodes it (`image_source::decodeForThumb` on `vcImageOf(path)`; skipped for a virtual copy), applies the orientation from `orientOf` (also given the real file's path), makes the thumbnail, then reads the sidecar (`readSidecarForThumb` through `sidecarFileOf`, so a copy reads its own file; at most 64 MiB) and runs `sidecarScan` on it. The picture half and the sidecar half are guarded separately (see Failure handling). As a last backstop, if even copying the path or storing the result runs out of memory, that file gets **no** result and the next one is still made.
+- Per file, the worker: decodes it (`image_source::decodeForThumb` on `vcImageOf(path)`; skipped for a virtual copy), applies the orientation from `orientOf` (also given the real file's path), makes the thumbnail, then reads the sidecar (`readSidecarForThumb`, i.e. `readSidecarFile`, so a copy reads its own file; at most 64 MiB) and runs `sidecarScan` on it. The picture half and the sidecar half are guarded separately (see Failure handling). As a last backstop, if even copying the path or storing the result runs out of memory, that file gets **no** result and the next one is still made.
 
 ---
 
@@ -2561,9 +2584,9 @@ The chain is the geometry worker's: orient -> straighten -> crop, from the untou
 ### `export_worker.hpp`
 Batch export: `exportPicture` renders one picture from its own saved edits and writes it, and `ExportWorker` runs a queue of them off the UI thread. A first-in-first-out queue with **no generations** (like `ThumbWorker`) that can be cancelled. (Needs LiteUI's decoder and encoders.)
 
-**Depends on:** `liteui.hpp`, `geometry.hpp`, `image16_convert.hpp`, `raster_ops.hpp`, `adjustment_set.hpp`, `render.hpp`, `file_utils.hpp`, `image_codec16.hpp`, `image_meta.hpp`, `image_source.hpp`, `color_tag.hpp`, `minijson.hpp`, `sidecar.hpp`, `virtual_copy.hpp`, `export_render.hpp`, and through `adjustment_set.hpp` the LUT library. **Test:** `cases/export_worker.inc` (timing-sensitive: loop it after changing the header).
+**Depends on:** `liteui.hpp`, `geometry.hpp`, `image16_convert.hpp`, `raster_ops.hpp`, `adjustment_set.hpp`, `render.hpp`, `file_utils.hpp`, `image_codec16.hpp`, `image_meta.hpp`, `image_source.hpp`, `color_tag.hpp`, `minijson.hpp`, `sidecar.hpp`, `sidecar_file.hpp`, `virtual_copy.hpp`, `export_render.hpp`, and through `adjustment_set.hpp` the LUT library. **Test:** `cases/export_worker.inc` (timing-sensitive: loop it after changing the header).
 
-**Constants:** `kExportMaxSidecarBytes` (`std::streamoff`) = 64 MiB (the limit the editor puts on a sidecar).
+**Constants:** none of its own: the 64 MiB sidecar limit is `kMaxSidecarBytes` in `sidecar_file.hpp` (this header used to have `kExportMaxSidecarBytes`).
 
 **Types**
 
@@ -2582,7 +2605,7 @@ Batch export: `exportPicture` renders one picture from its own saved edits and w
 - Returns: `<folder>/<stem>-edit.<ext>`, or with `-2`, `-3`, ... up to 9999 when that name is in `used` (compared **without case**, so `a.jpg` and `A.png` can't collide on a case-insensitive disk) or, unless `overwrite`, already exists. The chosen name is added to `used`. `used` wins over `overwrite`: a name already taken in this batch is never reused. Empty string if every name is taken.
 
 **`inline bool exportLoadEdits(const std::string &path, int w, int h, AdjustmentSet *adj, std::string *err)`**
-- `adj` must already have `setOriginalSize(w, h)` (the upright size). No sidecar file: returns true and leaves `adj` neutral. A sidecar that exists but is empty or over 64 MiB, unreadable, not valid JSON, from a newer version, written for a different size, or whose `edits` can't be loaded: returns false with a reason in `*err`. **This is stricter than the editor**, which opens such a picture clean: a batch must not quietly export an unedited picture. The same goes for a LUT: if the picture's LUT is in use (`LUT Amount` above 0) and the library reports it `Missing` (*"its LUT \"<name>\" is not in the LUT library"*) or `Unreadable` (*"... can't be read"*), the picture is skipped with that reason rather than exported without its look. A LUT whose file has changed (`HashChanged`) is used as it is, and a LUT at amount 0 never blocks a picture. The table is resolved here, on the worker thread, through `acquireLut`. The reasons come back in `*err`: *"couldn't read its saved edits"* (can't open or read the file), *"its saved edits have an unexpected size"* (empty or over `kExportMaxSidecarBytes`), *"its saved edits are unreadable"* (not valid JSON, or no usable `edits` object), *"its saved edits are from a newer Literoom"* (a missing or non-numeric `version` counts as newer too) and *"the picture's size has changed since it was edited"* (the sidecar's `image` width and height must equal `w` and `h`). If the existence check itself fails, the file is treated as absent.
+- `adj` must already have `setOriginalSize(w, h)` (the upright size). No sidecar file: returns true and leaves `adj` neutral. A sidecar that exists but is empty or over 64 MiB (`kMaxSidecarBytes`), unreadable, not valid JSON, from a newer version, written for a different size, or whose `edits` can't be loaded: returns false with a reason in `*err`. **This is stricter than the editor**, which opens such a picture clean: a batch must not quietly export an unedited picture. The same goes for a LUT: if the picture's LUT is in use (`LUT Amount` above 0) and the library reports it `Missing` (*"its LUT \"<name>\" is not in the LUT library"*) or `Unreadable` (*"... can't be read"*), the picture is skipped with that reason rather than exported without its look. A LUT whose file has changed (`HashChanged`) is used as it is, and a LUT at amount 0 never blocks a picture. The table is resolved here, on the worker thread, through `acquireLut`. The reasons come back in `*err`: *"couldn't read its saved edits"* (can't open or read the file), *"its saved edits have an unexpected size"* (empty or over `kExportMaxSidecarBytes`), *"its saved edits are unreadable"* (not valid JSON, or no usable `edits` object), *"its saved edits are from a newer Literoom"* (a missing or non-numeric `version` counts as newer too) and *"the picture's size has changed since it was edited"* (the sidecar's `image` width and height must equal `w` and `h`). The file is read with `readSidecarFile` and checked with `sidecarCheckText`: `Absent` is fine, `Empty` and `TooBig` give the size message, `Unreadable` gives *"couldn't read its saved edits"*; if the existence check itself fails the file is `Unreadable`, **never** treated as absent (a batch must not export an unedited picture because it couldn't tell).
 
 **`inline ExportOutcome exportPicture(const std::string &path, const ExportSettings &s, std::set<std::string> &used, const std::atomic<uint64_t> *latest = nullptr, uint64_t gen = 0)`**
 - The whole pipeline for one picture, a pure function of its inputs (see [threading.md](threading.md#the-export-worker-is-a-cancellable-fifo-of-whole-pipelines)):

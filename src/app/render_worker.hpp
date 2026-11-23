@@ -4,7 +4,7 @@
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
-#include "../workers/latest_worker.hpp"
+#include "workers/latest_worker.hpp"
 // BEGIN renderworker
 // ---------------- Background render worker ----------------
 // Runs the full-resolution pixel pass off the UI thread so releasing a slider

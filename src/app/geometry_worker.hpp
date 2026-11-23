@@ -6,7 +6,7 @@
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
-#include "../workers/latest_worker.hpp"
+#include "workers/latest_worker.hpp"
 
 // BEGIN geometryworker
 // ---------------- Background geometry worker ----------------

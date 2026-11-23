@@ -26,7 +26,8 @@
 #include "io/file_utils.hpp"   // fsPath
 #include "io/image_source.hpp" // decodeForThumb
 #include "io/photo_meta.hpp"   // PhotoMeta
-#include "io/sidecar.hpp"      // sidecarFileOf, sidecarScan
+#include "io/sidecar.hpp"      // sidecarScan
+#include "io/sidecar_file.hpp" // readSidecarFile
 #include "io/virtual_copy.hpp" // vcImageOf, vcCopyOf
 #include "liteui.hpp"
 
@@ -49,29 +50,16 @@
 
 constexpr int kFilmThumbW = 96, kFilmThumbH = 72;
 
-// Largest sidecar the thumbnail worker will read: the same limit the editor
-// puts on a sidecar it opens. A bigger file counts as edited, with no meta.
-constexpr std::streamoff kThumbMaxSidecarBytes = std::streamoff{64} << 20;
-
 // The sidecar's text; false if there is no file, it is empty, too big or
-// unreadable. *exists says whether the file was there at all.
-inline bool readSidecarForThumb(const std::string &imagePath, std::string *text, 
+// unreadable. *exists says whether the file was there at all (a file that can't
+// even be checked counts as there, so the worker marks it edited). A thin
+// wrapper over readSidecarFile, which owns the path, the size limit and the
+// absent / unreadable rule.
+inline bool readSidecarForThumb(const std::string &imagePath, std::string *text,
                                 bool *exists) {
-  const std::filesystem::path p = fsPath(sidecarFileOf(imagePath));
-  std::error_code ec;
-  *exists = std::filesystem::exists(p, ec) && !ec;
-  if (!*exists)
-    return false;
-  std::ifstream f(p, std::ios::binary | std::ios::ate);
-  if (!f)
-    return false;
-  const std::streamoff n = f.tellg();
-  if (n <= 0 || n > kThumbMaxSidecarBytes)
-    return false;
-  text->assign(static_cast<size_t>(n), '\0');
-  f.seekg(0);
-  f.read(text->data(), n);
-  return static_cast<bool>(f);
+  const SidecarRead r = readSidecarFile(imagePath, text);
+  *exists = r != SidecarRead::Absent;
+  return r == SidecarRead::Ok;
 }
 
 // `src` scaled down (box average) to fit kFilmThumbW x kFilmThumbH; never

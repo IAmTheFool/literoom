@@ -255,6 +255,21 @@ public:
   // Everything the user has done, as JSON for the sidecar file (the undo
   // history is not included).
   mj::Json toJson() const { return sidecarEditsToJson(currentEdits()); }
+  // What the SIDECAR stores: the edits of the NEWEST history step, which is the
+  // current state unless the user has stepped back (undo, a History click).
+  // Stepping back is only a way of looking: closing the app on "Original" must
+  // not lose the edits above it. The first new edit after stepping back
+  // discards those newer steps (appendSnapshot), and from then on the newest
+  // step is that new edit, so it is what gets saved.
+  SidecarEdits latestEdits() const
+  {
+    if (historyIndex_ + 1 >= history_.size())
+      return currentEdits();
+    const Snapshot &s = history_.back();
+    return SidecarEdits{s.values, s.crop,  s.orient, s.angle, s.expand,
+                        s.curves, s.mix,   s.grade,  s.masks, s.lut};
+  }
+  mj::Json latestToJson() const { return sidecarEditsToJson(latestEdits()); }
   // The whole edit state as a plain value: what toJson writes, and what a named
   // snapshot stores. Does not touch the history or version().
   SidecarEdits currentEdits() const
@@ -280,8 +295,17 @@ public:
     grade_ = e.grade;
     masks_ = std::move(e.masks);
     lut_ = std::move(e.lut);
-    history_ = {snapshot()};
-    historyIndex_ = 0;
+    // Step 0 is the untouched picture. If the file holds real edits, step 1 is
+    // "Saved edits" and the picture opens on it. A file with only a rating or
+    // snapshots (neutral edits) stays a single step.
+    if (toJson().dump() == sidecarNeutralEditsDump())
+      history_ = {snapshot()};
+    else
+    {
+      history_ = {Snapshot{}, snapshot()};
+      history_.back().label = "Saved edits";
+    }
+    historyIndex_ = history_.size() - 1;
     lastEdited_ = AdjId::Count;
     return true;
   }
@@ -309,7 +333,7 @@ public:
     }
   }
   // The drag ended: the next mask edit starts a fresh undo step.
-  void endMaskEdit()
+  void endMaskEdit() 
   {
     if (lastEdited_ == kEditMask)
       lastEdited_ = AdjId::Count;
@@ -512,7 +536,7 @@ public:
   }
 
   // ---- History panel ----
-  size_t historySize() const { return history_.size(); }
+  size_t historySize() const { return history_.size(); }  
   size_t historyIndex() const { return historyIndex_; }
   // What step `i` changed compared with step i-1 ("Original" for step 0).
   // Cached per version(), so polling it every frame is cheap.

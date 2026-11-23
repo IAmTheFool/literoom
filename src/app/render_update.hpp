@@ -6,7 +6,7 @@
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
-#include "../workers/latest_worker.hpp"
+#include "workers/latest_worker.hpp"
 
 // ---- Handing the worker's result back to the UI thread ----
 // The event loop sleeps until the OS hands it an event, and a worker finishing
@@ -25,8 +25,12 @@ static void adoptFullRender(RenderWorker::Result &&r) {
 
 // Non-blocking; polled once per frame from flushPendingAdjust.
 static void collectFullRender() {
-  if (auto r = renderWorker.collect())
-    adoptFullRender(std::move(*r));
+  try {
+    if (auto r = renderWorker.collect())
+      adoptFullRender(std::move(*r));
+  } catch (const std::exception &e) {
+    setStatus(std::string("Render failed: ") + e.what(), /*isError=*/true);
+  }
 }
 
 // Blocking: makes `state.image` current. For the few places that need the

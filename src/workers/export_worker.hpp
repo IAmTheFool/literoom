@@ -43,6 +43,7 @@
 #include "io/image_source.hpp"
 #include "io/minijson.hpp"
 #include "io/sidecar.hpp"
+#include "io/sidecar_file.hpp"
 #include "io/virtual_copy.hpp"
 #include "liteui.hpp"
 #include "render/render.hpp"
@@ -68,9 +69,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
-// Largest sidecar a batch will read: the same limit the editor puts on one.
-constexpr std::streamoff kExportMaxSidecarBytes = std::streamoff{64} << 20;
 
 // Encodes `img` as a JPEG at `quality` (1..100). The ICC profile of the photo
 // at `sourcePath` always rides along: the editor converts no pixels, so without
@@ -169,46 +167,36 @@ inline std::string exportTargetPath(const std::string &folder,
 // skipping it with a reason.
 inline bool exportLoadEdits(const std::string &path, int w, int h, 
                             AdjustmentSet *adj, std::string *err) {
-  const std::filesystem::path p = fsPath(sidecarFileOf(path));
-  std::error_code ec;
-  if (!std::filesystem::exists(p, ec) || ec)
-    return true;
-  std::ifstream f(p, std::ios::binary | std::ios::ate);
-  if (!f) {
-    *err = "couldn't read its saved edits";
-    return false;
-  }
-  const std::streamoff n = f.tellg();
-  if (n <= 0 || n > kExportMaxSidecarBytes) {
+  std::string text;
+  switch (readSidecarFile(path, &text)) {
+  case SidecarRead::Absent:
+    return true; // the file is not there (a file we can't even check is not this)
+  case SidecarRead::Ok:
+    break;
+  case SidecarRead::Empty:
+  case SidecarRead::TooBig:
     *err = "its saved edits have an unexpected size";
     return false;
-  }
-  std::string text(static_cast<size_t>(n), '\0');
-  f.seekg(0);
-  f.read(text.data(), n);
-  if (!f) {
+  case SidecarRead::Unreadable:
     *err = "couldn't read its saved edits";
     return false;
   }
-  mj::Json root;
-  std::string perr;
-  if (!mj::Json::parse(text, &root, &perr)) {
+  SidecarHead head;
+  switch (sidecarCheckText(text, w, h, &head)) {
+  case SidecarCheck::Ok:
+    break;
+  case SidecarCheck::Unparsable:
     *err = "its saved edits are unreadable";
     return false;
-  }
-  const mj::Json *ver = root.find("version");
-  if (!ver || !ver->isNumber() || ver->asNum(0) > kSidecarVersion) {
+  case SidecarCheck::Newer:
     *err = "its saved edits are from a newer Literoom";
     return false;
-  }
-  const mj::Json *img = root.find("image");
-  if (!img || !img->isObject() || !img->find("width") || !img->find("height") ||
-      img->find("width")->asNum(-1) != w ||
-      img->find("height")->asNum(-1) != h) {
+  case SidecarCheck::NoSize:
+  case SidecarCheck::SizeChanged:
     *err = "the picture's size has changed since it was edited";
     return false;
   }
-  const mj::Json *edits = root.find("edits");
+  const mj::Json *edits = head.root.find("edits");
   if (!edits || !adj->loadJson(*edits)) {
     *err = "its saved edits are unreadable";
     return false;

@@ -352,7 +352,6 @@ static void loadSidecar() {
   dropLutCache(); // a LUT file may have changed since the last picture was open
 
   const std::filesystem::path sidecar = sidecarPath(state.imagePath);
-  constexpr std::streamoff kMaxSidecarBytes = std::streamoff{64} << 20;
 
   // setStatus cuts a message at 110 characters, so the part that matters
   // comes first.
@@ -369,56 +368,39 @@ static void loadSidecar() {
       blocked("can't back up the old file");
   };
 
-  std::error_code ec;
-  const bool exists = std::filesystem::exists(sidecar, ec);
-  if (ec) {
-    blocked("couldn't check the file");
-    return;
-  }
-  if (!exists)
+  std::string text, why;
+  switch (readSidecarFile(state.imagePath, &text, &why)) {
+  case SidecarRead::Absent:
     return; // no saved edits: the normal case
-
-  std::ifstream f(sidecar, std::ios::binary | std::ios::ate);
-  if (!f) {
-    blocked("couldn't open the file");
-    return;
-  }
-  const std::streamoff n = f.tellg();
-  if (n == 0) { // an empty file holds nothing to lose
+  case SidecarRead::Empty: // an empty file holds nothing to lose
     setStatus("Ignored saved edits: the file is empty", true);
     return;
-  }
-  if (n < 0 || n > kMaxSidecarBytes) {
-    blocked("unexpected file size");
+  case SidecarRead::TooBig:
+  case SidecarRead::Unreadable:
+    blocked(why);
     return;
+  case SidecarRead::Ok:
+    break;
   }
-  std::string text(static_cast<size_t>(n), '\0');
-  f.seekg(0);
-  f.read(text.data(), n);
-  if (!f) {
-    blocked("couldn't read the file");
+  // The reader has closed the file, so the backup below can copy it.
+  SidecarHead head;
+  switch (sidecarCheckText(text, state.original->width, state.original->height,
+                           &head)) {
+  case SidecarCheck::Ok:
+    break;
+  case SidecarCheck::Unparsable:
+    unusable(head.parseError.empty() ? std::string("unreadable")
+                                     : head.parseError);
     return;
-  }
-  f.close(); // the backup below copies the file: don't hold it open
-  mj::Json root;
-  std::string err;
-  if (!mj::Json::parse(text, &root, &err)) {
-    unusable(err);
-    return;
-  }
-  const mj::Json *ver = root.find("version");
-  if (!ver || !ver->isNumber() || ver->asNum(0) > kSidecarVersion) {
+  case SidecarCheck::Newer:
     unusable("made by a newer Literoom");
     return;
-  }
-  const mj::Json *img = root.find("image");
-  if (!img || !img->isObject() || img->find("width") == nullptr ||
-      img->find("height") == nullptr ||
-      img->find("width")->asNum(-1) != state.original->width ||
-      img->find("height")->asNum(-1) != state.original->height) {
+  case SidecarCheck::NoSize:
+  case SidecarCheck::SizeChanged:
     unusable("the picture's size has changed");
     return;
   }
+  const mj::Json &root = head.root;
   const mj::Json *edits = root.find("edits");
   if (!edits || !state.adjust.loadJson(*edits)) {
     unusable("unreadable");
