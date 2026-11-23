@@ -26,8 +26,23 @@
 //     tell a late result from the current list;
 //   * the UI thread is woken by notify() after every result and when a job ends.
 //
+// Failure handling: no exception may leave the worker thread (an uncaught one
+// in a std::jthread is std::terminate). Each LUT is guarded on its own, so one
+// bad file does not stop the previews of the others:
+//   * a file that throws while it is being read or parsed becomes an ordinary
+//     unusable file: `error` says why, in the same "<name>: <reason>" form the
+//     parser's own messages use (the pane strips the name);
+//   * a LUT that reads fine but throws while the preview is rendered (out of
+//     memory) keeps its hash, size and warning and simply has no thumbnail: the
+//     file itself is not at fault, so it stays usable;
+//   * a render that hands back nothing without having been superseded also just
+//     leaves that row without a thumbnail;
+//   * if the shared thumbnail can't be made, every row just has no thumbnail.
+// Whatever happens, running_ is reset, so busy() cannot get stuck on true.
+//
 // Thread model: submit(), cancel(), busy(), collect(), shutdown() from ONE thread
-// (the UI thread). setNotify() must be called before the first submit().
+// (the UI thread). setNotify() may be called at any time: the worker takes its
+// own copy of the callback under the lock and calls that copy outside it.
 #pragma once
 #include "liteui.hpp"
 #include "color/color_pass.hpp"
@@ -42,9 +57,11 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <stop_token>
 #include <string>
@@ -92,7 +109,13 @@ public:
   LutPreviewWorker &operator=(const LutPreviewWorker &) = delete;
   ~LutPreviewWorker() { shutdown(); }
 
-  void setNotify(std::function<void()> fn) { notify_ = std::move(fn); }
+  // May be called at any time (see the thread model above). The old callback
+  // is destroyed after the lock is released.
+  void setNotify(std::function<void()> fn)
+  {
+    std::lock_guard lk(m_);
+    notify_.swap(fn);
+  }
 
   // Replaces whatever is waiting or running with `job`; results of the replaced
   // job that were not collected yet are dropped.
@@ -155,6 +178,28 @@ public:
   }
 
 private:
+  // Wakes the UI. The callback is copied under the lock (setNotify may run at
+  // any time) and called outside it, so a slow or re-entrant callback never
+  // blocks submit() / cancel() / collect(). Copying a std::function can throw,
+  // so it sits inside the try with the call. A failing wake-up must not end the
+  // worker (same rule as LatestWorker). Never call this with m_ held.
+  void wake()
+  {
+    try
+    {
+      std::function<void()> fn;
+      {
+        std::lock_guard lk(m_);
+        fn = notify_;
+      }
+      if (fn)
+        fn();
+    }
+    catch (...)
+    {
+    }
+  }
+
   void run(std::stop_token st)
   {
     for (;;)
@@ -171,21 +216,40 @@ private:
         gen = epoch_.load();
         running_ = true;
       }
-      process(job, gen);
+      // process() guards every LUT on its own; this is the backstop for what
+      // is left (an allocation failure outside those guards). running_ must be
+      // reset whatever happens, or busy() would stay true for good.
+      try
+      {
+        process(job, gen);
+      }
+      catch (...)
+      {
+      }
       {
         std::lock_guard lk(m_);
         running_ = false;
       }
-      if (notify_)
-        notify_(); // the job is over: the UI may stop showing "working"
+      wake(); // the job is over: the UI may stop showing "working"
     }
   }
 
   void process(const LutPreviewJob &job, uint64_t gen)
   {
+    // Once, for every LUT. If it can't be made, the rows have no thumbnails
+    // (their hash, size and warning still arrive).
     std::shared_ptr<const CanvasImage> reduced;
     if (job.base)
-      reduced = makeThumb(*job.base); // once, for every LUT
+    {
+      try
+      {
+        reduced = makeThumb(*job.base);
+      }
+      catch (...)
+      {
+        reduced.reset();
+      }
+    }
     for (const LutEntry &item : job.items)
     {
       if (epoch_.load() != gen)
@@ -197,20 +261,61 @@ private:
       Lut3D lut;
       LutCubeInfo info;
       uint64_t hash = 0;
-      // On failure r.error says why; there is then no hash, no size and no thumbnail.
-      if (loadLutFile(item.path, &lut, &info, &hash, &r.error))
+      bool loaded = false;
+      // Step 1: read and parse the file. A throw here makes the file unusable,
+      // like a parse error: no hash, no size, no thumbnail.
+      try
       {
-        r.hash = hash;
-        r.size = lut.size;
-        r.warning = lutExpectationWarning(item.name, lut, info);
-        if (reduced)
+        // On failure r.error says why; there is then no hash, no size and no thumbnail.
+        loaded = loadLutFile(item.path, &lut, &info, &hash, &r.error);
+        if (loaded)
+        {
+          r.hash = hash;
+          r.size = lut.size;
+          r.warning = lutExpectationWarning(item.name, lut, info);
+        }
+      }
+      catch (const std::bad_alloc &)
+      {
+        loaded = false;
+        r.hash = 0;
+        r.size = 0;
+        r.warning.clear();
+        r.error = item.name + ": not enough memory to read it";
+      }
+      catch (const std::exception &e)
+      {
+        loaded = false;
+        r.hash = 0;
+        r.size = 0;
+        r.warning.clear();
+        r.error = item.name + ": " + e.what();
+      }
+      catch (...)
+      {
+        loaded = false;
+        r.hash = 0;
+        r.size = 0;
+        r.warning.clear();
+        r.error = item.name + ": unexpected error";
+      }
+      // Step 2: the preview. A throw here (out of memory) is not the file's
+      // fault: it keeps its hash, size and warning, stays usable, and just has
+      // no thumbnail.
+      if (loaded && reduced)
+      {
+        try
         {
           const auto table = std::make_shared<const Lut3D>(std::move(lut));
           const RenderParams p = lutPreviewParams(job.params, makeLutPass(table, 100.0f));
           std::shared_ptr<CanvasImage> img = renderWith(*reduced, p, &epoch_, gen);
-          if (!img)
-            return; // superseded while rendering
-          r.thumb = std::move(img);
+          if (epoch_.load() != gen)
+            return; // superseded while rendering (renderWith then returns null)
+          r.thumb = std::move(img); // null if it produced nothing: a row without a thumbnail
+        }
+        catch (...)
+        {
+          r.thumb.reset();
         }
       }
       {
@@ -219,12 +324,11 @@ private:
           return; // submit() / cancel() ran while we worked: this result is stale
         results_.push_back(std::move(r));
       }
-      if (notify_)
-        notify_();
+      wake();
     }
   }
 
-  mutable std::mutex m_; // guards pending_, results_, running_
+  mutable std::mutex m_; // guards pending_, results_, running_, notify_
   std::condition_variable_any cv_;
   std::optional<LutPreviewJob> pending_;
   std::vector<LutPreviewResult> results_;

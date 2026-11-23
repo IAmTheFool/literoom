@@ -1,6 +1,7 @@
 // app/saved_edits.hpp: saved edits: the sidecar file
 //
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
+// UI-shell code split out of main.cpp. A plain move, apart from the
+// state.sidecarBlocked guard in saveSidecar.
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
@@ -87,6 +88,16 @@ static void saveSidecar() {
   state.metaDirty = false;
   state.snapshotsDirty = false;
 
+  // The file is there but loadSidecar could not read it, so what it holds is
+  // unknown: writing now would replace it with this picture's (possibly empty)
+  // edits. Same policy as a failing disk: the change counts as "seen" (not
+  // retried every frame, only on the next edit), and the bar says why.
+  if (state.sidecarBlocked) {
+    setStatus("Not saved: its saved edits couldn't be read. Reopen the picture",
+              true);
+    return;
+  }
+
   const std::string text =
       sidecarFileText(baseName(vcImageOf(state.imagePath)),
                       state.original->width, state.original->height,
@@ -135,4 +146,3 @@ static void autosaveSidecar() {
     return;
   saveSidecar();
 }
-

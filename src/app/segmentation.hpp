@@ -1,9 +1,12 @@
 // app/segmentation.hpp: object segmentation worker and engine info
 //
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
+// UI-shell code split out of main.cpp. A plain move, apart from the failure
+// handling in segmentObject / runSegmentJob (see below).
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+#include <exception>
+#include <new>
 
 // ---------------- Object segmentation (background) ----------------
 struct SegmentRequest {
@@ -63,6 +66,19 @@ static std::string samModelDir() {
   return "models";
 }
 
+// Failure handling.
+//  * Loading the model: a load that THROWS (the ONNX runtime reports a bad or
+//    missing model that way) is the same as one that returns false: SAM is
+//    unavailable and the color-grow wand takes over, with the reason in the
+//    engine label. If it were left to propagate, `backend` would stay 0 and
+//    every later job would try the load (and fail) all over again.
+//  * Encoding: the encoder's cache key is cleared BEFORE the call and set only
+//    after it succeeds. A throw or a failure part-way leaves the encoder in an
+//    unknown state, and a stale key would let the next job for the previous
+//    picture skip the encode and decode against it.
+//  * Anything else thrown (decoding, the wand, an allocation) is caught by
+//    runSegmentJob below and reported through SegmentResult::error.
+
 // Worker thread only. Prefetch (no prompts): load + encode, return null with
 // no error. Falls back to the color-grow stand-in when SAM is unavailable.
 static std::shared_ptr<const ObjectMap>
@@ -71,12 +87,23 @@ segmentObject(const CanvasImage &img, uint64_t key,
               const std::atomic<uint64_t> *latest, uint64_t gen) {
   static sam::Segmenter seg;
   static int backend = 0; // 0 untried, 1 SAM, -1 fallback
-  static uint64_t encodedKey = 0;
+  constexpr uint64_t kNoKey = ~uint64_t{0};
+  static uint64_t encodedKey = kNoKey; // the picture the encoder holds, if any
   if (backend == 0) {
     const std::string dir = samModelDir();
     std::string e;
-    if (seg.load(dir + "/mobile_sam.encoder.onnx",
-                 dir + "/mobile_sam.decoder.onnx", &e)) {
+    bool loaded = false;
+    try {
+      loaded = seg.load(dir + "/mobile_sam.encoder.onnx",
+                        dir + "/mobile_sam.decoder.onnx", &e);
+    } catch (const std::exception &ex) {
+      loaded = false;
+      e = ex.what();
+    } catch (...) {
+      loaded = false;
+      e = "unexpected error while loading the model";
+    }
+    if (loaded) {
       backend = 1;
       setSegInfo("Engine: MobileSAM");
     } else {
@@ -90,6 +117,7 @@ segmentObject(const CanvasImage &img, uint64_t key,
                : segmentObjectWand(img, key, prompts, err, latest, gen);
 
   if (encodedKey != key) {
+    encodedKey = kNoKey; // the encoder is in flux until encode() succeeds
     if (!seg.encode(img.pixels.data(), img.width, img.height, err))
       return nullptr;
     encodedKey = key;
@@ -124,11 +152,31 @@ struct SegmentResult {
 };
 
 // Worker thread only. Always returns a value (null `map` + `error` on failure).
+// An exception from the segmenter is caught here and becomes `error`, which
+// adoptSegment already shows ("Object selection failed: ..." / "... unavailable:
+// ..." for a prefetch): LatestWorker would otherwise park it and rethrow it
+// from collect() on the UI thread, where nothing catches it.
 static std::optional<SegmentResult> runSegmentJob(SegmentRequest &&req,
                                                   WorkerCancel c) {
   SegmentResult r;
-  r.map = segmentObject(*req.image, req.imageKey, req.prompts, &r.error,
-                        c.latest, c.gen);
+  try {
+    if (!req.image)
+      r.error = "no picture to analyze";
+    else
+      r.map = segmentObject(*req.image, req.imageKey, req.prompts, &r.error,
+                            c.latest, c.gen);
+  } catch (const std::bad_alloc &) {
+    r.map = nullptr;
+    r.error = "not enough memory";
+  } catch (const std::exception &e) {
+    r.map = nullptr;
+    r.error = e.what();
+    if (r.error.empty())
+      r.error = "unexpected error";
+  } catch (...) {
+    r.map = nullptr;
+    r.error = "unexpected error";
+  }
   r.req = std::move(req);
   r.req.image.reset();
   return r;
@@ -190,4 +238,3 @@ static void collectSegmentJob() {
 static void filmMarkEdited(const std::string &path); // filmstrip (below)
 static int filmViewPos(int i);                       // filmstrip (below)
 static void filmApplyMeta(const std::string &path, const PhotoMeta &m); // ditto
-

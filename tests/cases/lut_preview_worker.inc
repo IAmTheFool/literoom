@@ -8,13 +8,17 @@
 
 #include "workers/lut_preview_worker.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -143,6 +147,45 @@ static bool waitFor(LutPreviewWorker &w, std::vector<LutPreviewResult> *got, siz
   }
   return true;
 }
+// Waits until the wake-up counter has reached `n`: the wake-up for the end of a job runs just
+// AFTER busy() has turned false, so busy() alone does not guarantee it has happened.
+static bool waitWakes(const std::atomic<int> &wakes, int n)
+{
+  const auto t0 = std::chrono::steady_clock::now();
+  while (wakes.load() < n)
+  {
+    if (std::chrono::steady_clock::now() - t0 > kWait)
+      return false;
+    std::this_thread::sleep_for(2ms);
+  }
+  return true;
+}
+
+// A door a callback waits at until the test opens it.
+class Gate
+{
+public:
+  void open()
+  {
+    {
+      std::lock_guard lk(m_);
+      open_ = true;
+    }
+    cv_.notify_all();
+  }
+  bool wait()
+  {
+    std::unique_lock lk(m_);
+    return cv_.wait_for(lk, kWait, [&]
+                        { return open_; });
+  }
+
+private:
+  std::mutex m_;
+  std::condition_variable cv_;
+  bool open_ = false;
+};
+
 static bool waitIdle(LutPreviewWorker &w)
 {
   const auto t0 = std::chrono::steady_clock::now();
@@ -223,7 +266,7 @@ TEST_CASE("lut_preview_worker: previewsAreTheRealRender", "[lut_preview_worker][
   std::vector<LutPreviewResult> got;
   CHECK(waitFor(w, &got, 4));
   CHECK(waitIdle(w));
-  CHECK(wakes.load() >= 5); // one per result, and one when the job ended
+  CHECK(waitWakes(wakes, 5)); // one per result, and one when the job ended
   CHECK((got.size() == 4 && w.collect().empty()));
   const auto reduced = makeThumb(*base);
   for (size_t i = 0; i < got.size() && i < items.size(); ++i)
@@ -477,5 +520,113 @@ TEST_CASE("lut_preview_worker: helperAndEmptyParams", "[lut_preview_worker]")
   const auto table = std::make_shared<const Lut3D>(identityLut(3));
   const RenderParams out = lutPreviewParams(in, makeLutPass(table, 100.0f));
   CHECK((!out.fx.any() && out.color.lut.any() && out.color.lut.lut == table && out.luts == in.luts));
+}
+// ------------------------------------------ replacement, cap, notify: the worker's edges
+TEST_CASE("lut_preview_worker: replaceWhileRunning", "[lut_preview_worker][threaded]")
+{ // deterministic: the first job is held right after its first result, then replaced
+  Library lib;
+  const auto base = makePicture(120, 90);
+  AdjustmentSet look = fresh(120, 90);
+  LutPreviewWorker w;
+  Gate inNotify, release;
+  std::atomic<int> calls{0};
+  std::atomic<bool> timedOut{false};
+  w.setNotify([&]
+              {
+                if (calls++ == 0)
+                {
+                  inNotify.open();
+                  if (!release.wait())
+                    timedOut = true;
+                } });
+  LutPreviewJob first;
+  first.serial = 1;
+  first.base = base;
+  first.params = look.buildRenderParams();
+  first.items = lib.entries();
+  CHECK(first.items.size() == 4);
+  w.submit(first);
+  CHECK(inNotify.wait()); // result 1 of 4 is parked; the worker is held in notify
+  LutPreviewJob second = first;
+  second.serial = 2;
+  second.items.resize(2);
+  w.submit(second); // drops the parked result and abandons the rest of job 1
+  release.open();
+  std::vector<LutPreviewResult> got;
+  CHECK(waitFor(w, &got, 2));
+  CHECK(waitIdle(w));
+  for (auto &r : w.collect())
+    got.push_back(std::move(r));
+  CHECK(got.size() == 2);
+  for (const auto &r : got)
+    CHECK(r.serial == 2);
+  CHECK(!timedOut);
+}
+
+TEST_CASE("lut_preview_worker: listIsCappedAtMaxFiles", "[lut_preview_worker][threaded]")
+{
+  Library lib;
+  LutPreviewWorker w;
+  LutPreviewJob job;
+  job.serial = 1;
+  job.base = nullptr; // no thumbnails: the files are only read
+  job.params = fresh(50, 50).buildRenderParams();
+  const LutEntry one = lib.entries()[0];
+  job.items.assign(kLutMaxFiles + 7, one);
+  w.submit(job);
+  std::vector<LutPreviewResult> got;
+  CHECK(waitFor(w, &got, kLutMaxFiles));
+  CHECK(waitIdle(w));
+  for (auto &r : w.collect())
+    got.push_back(std::move(r));
+  CHECK(got.size() == kLutMaxFiles); // the extra seven were never made
+}
+
+TEST_CASE("lut_preview_worker: throwingNotifyAndRestart", "[lut_preview_worker][threaded]")
+{
+  Library lib;
+  LutPreviewWorker w;
+  std::atomic<int> wakes{0};
+  w.setNotify([&]
+              {
+                ++wakes;
+                throw std::runtime_error("wake-up failed"); });
+  LutPreviewJob job;
+  job.serial = 1;
+  job.base = nullptr;
+  job.params = fresh(50, 50).buildRenderParams();
+  job.items = lib.entries();
+  job.items.resize(2);
+  w.submit(job);
+  std::vector<LutPreviewResult> got;
+  CHECK(waitFor(w, &got, 2)); // the throw cost neither the results nor the worker
+  CHECK(waitIdle(w));
+  CHECK(waitWakes(wakes, 3)); // two results and the end of the job
+  w.shutdown();
+  CHECK(!w.busy());
+  job.serial = 2; // shutdown() joined the thread; submit() starts a fresh one
+  w.submit(job);
+  got.clear();
+  CHECK(waitFor(w, &got, 2));
+  CHECK((got.size() == 2 && got[0].serial == 2));
+}
+
+TEST_CASE("lut_preview_worker: setNotifyWhileRunning", "[lut_preview_worker][threaded]")
+{ // swapping the callback while the worker is busy is safe (run under ThreadSanitizer to prove it)
+  Library lib;
+  LutPreviewWorker w;
+  LutPreviewJob job;
+  job.serial = 1;
+  job.base = nullptr;
+  job.params = fresh(50, 50).buildRenderParams();
+  const size_t n = std::min<size_t>(60, kLutMaxFiles);
+  job.items.assign(n, lib.entries()[0]); // enough results for the swaps to overlap the wake-ups
+  w.submit(job);
+  const auto t0 = std::chrono::steady_clock::now();
+  while (w.busy() && std::chrono::steady_clock::now() - t0 < kWait)
+    w.setNotify([] {}); // keep swapping for as long as the worker is working
+  CHECK(waitIdle(w));
+  std::vector<LutPreviewResult> got;
+  CHECK(waitFor(w, &got, n));
 }
 } // namespace lut_preview_worker_cases

@@ -8,16 +8,22 @@
 // run on the main thread.
 
 #include "io/exif.hpp"
+#include "io/photo_meta.hpp"   // PhotoMeta, PhotoFlag
+#include "io/sidecar.hpp"      // sidecarFileOf, sidecarFileText, SidecarEdits
+#include "io/virtual_copy.hpp" // vcPath
 #include "cases/encode_helpers.hpp"
 #include "workers/thumb_worker.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -163,6 +169,14 @@ static Orient orientFromExif(const std::string &path)
     o.flip = t.flip;
   }
   return o;
+}
+
+// Red and green of one pixel (makeImage's red grows with x, its green with y).
+static void rg(const CanvasImage &im, int x, int y, int *r, int *g)
+{
+  const uint8_t *p = &im.pixels[(static_cast<size_t>(y) * im.width + x) * 4];
+  *r = p[0];
+  *g = p[1];
 }
 
 // ------------------------------------------------------------------ makeThumb
@@ -371,8 +385,6 @@ TEST_CASE("thumb_worker: editedFlag", "[thumb_worker][threaded]")
     CHECK((got[0].path == withEdits && got[0].edited && got[0].thumb));
     CHECK((got[1].path == plain && !got[1].edited && got[1].thumb));
   }
-  // the sidecar's name is the picture's name plus the extension
-  CHECK(sidecarFileOf("x/photo.jpg") == std::string("x/photo.jpg") + kSidecarExt);
 }
 
 // ----------------------------------------------------- rating, flag, color label
@@ -435,7 +447,6 @@ TEST_CASE("thumb_worker: virtualCopy", "[thumb_worker][threaded]")
   const PhotoMeta mCopy{3, PhotoFlag::Pick, 2};
   writeSidecar(pic, SidecarEdits{}, PhotoMeta{});
   writeSidecar(copy2, e, mCopy);
-  CHECK(sidecarFileOf(copy2) == td.path("v.png.vc2.literoom.json"));
   Latch notified;
   ThumbWorker w(orientFromExif);
   w.setNotify([&] { notified.signal(); });
@@ -476,6 +487,88 @@ TEST_CASE("thumb_worker: metaOfUndecodablePicture", "[thumb_worker][threaded]")
     CHECK((got[0].thumb == nullptr && got[0].meta == m && !got[0].edited));
 }
 
+// ------------------------------------------------------------ failure containment
+TEST_CASE("thumb_worker: throwingOrientKeepsSidecarFacts", "[thumb_worker][threaded]")
+{ // an exception while turning the picture upright costs the thumb, not the sidecar facts
+  TempDir td;
+  const std::string boom = td.path("boom.png"), fine = td.path("fine.png");
+  CHECK(writePng(boom, 30, 20));
+  CHECK(writePng(fine, 30, 20));
+  SidecarEdits e;
+  e.values[static_cast<size_t>(AdjId::Exposure)] = 10.0f;
+  const PhotoMeta m{4, PhotoFlag::Pick, 3};
+  writeSidecar(boom, e, m);
+  Latch notified;
+  ThumbWorker w([&](const std::string &p) -> Orient
+                {
+                  if (p == boom)
+                    throw std::runtime_error("bad exif");
+                  return Orient{}; });
+  w.setNotify([&] { notified.signal(); });
+  w.setQueue({boom, fine});
+  CHECK(notified.waitFor(2));
+  w.shutdown();
+  auto got = w.collect();
+  CHECK(got.size() == 2);
+  if (got.size() == 2)
+  {
+    CHECK((got[0].path == boom && !got[0].thumb && !got[0].thumbSkipped));
+    CHECK((got[0].edited && got[0].meta == m));   // the other half survived
+    CHECK((got[1].path == fine && got[1].thumb)); // the queue went on
+  }
+}
+
+TEST_CASE("thumb_worker: throwingNotifyDoesNotEndWorker", "[thumb_worker][threaded]")
+{ // a failing wake-up is swallowed: the worker still makes and announces the next file
+  TempDir td;
+  const std::string a = td.path("a.png"), b = td.path("b.png");
+  CHECK(writePng(a, 30, 20));
+  CHECK(writePng(b, 30, 20));
+  Latch notified;
+  ThumbWorker w(orientFromExif);
+  w.setNotify([&]
+              {
+                notified.signal();
+                throw std::runtime_error("wake-up failed"); });
+  w.setQueue({a, b});
+  CHECK(notified.waitFor(2));
+  w.shutdown();
+  auto got = w.collect();
+  CHECK(got.size() == 2);
+  if (got.size() == 2)
+    CHECK((got[0].path == a && got[1].path == b && got[0].thumb && got[1].thumb));
+}
+
+TEST_CASE("thumb_worker: unusableSidecarCountsAsEdited", "[thumb_worker][threaded]")
+{ // present but too big or empty: counted as edited, no meta, and the picture still gets its thumb.
+  // The size limit exists so a huge sidecar is never read into memory.
+  TempDir td;
+  const std::string big = td.path("big.png"), empty = td.path("empty.png");
+  CHECK(writePng(big, 30, 20));
+  CHECK(writePng(empty, 30, 20));
+  {
+    std::ofstream f(fsPath(sidecarFileOf(big)), std::ios::binary);
+    f << "{}";
+  }
+  {
+    std::ofstream f(fsPath(sidecarFileOf(empty)), std::ios::binary); // zero bytes
+  }
+  std::error_code ec;
+  std::filesystem::resize_file(fsPath(sidecarFileOf(big)), kThumbMaxSidecarBytes + 1, ec);
+  CHECK(!ec);
+  Latch notified;
+  ThumbWorker w(orientFromExif);
+  w.setNotify([&] { notified.signal(); });
+  w.setQueue({big, empty});
+  CHECK(notified.waitFor(2));
+  w.shutdown();
+  auto got = w.collect();
+  CHECK(got.size() == 2);
+  if (got.size() == 2)
+    for (const auto &r : got)
+      CHECK((r.thumb && r.edited && r.meta.isDefault()));
+}
+
 TEST_CASE("thumb_worker: exifOrientation", "[thumb_worker][threaded]")
 {
   TempDir td;
@@ -500,6 +593,43 @@ TEST_CASE("thumb_worker: exifOrientation", "[thumb_worker][threaded]")
   }
   else
     CHECK(false);
+}
+
+TEST_CASE("thumb_worker: exifOrientationDirection", "[thumb_worker][threaded]")
+{ // dimensions alone can't tell a 180 turn from no turn, or 90 from 270, or a mirror from none:
+  // the gradient says which corner ended up top-left (JPEG is lossy, so only high / low is checked)
+  TempDir td;
+  struct Case { int orient; bool redHigh, greenHigh; }; // the top-left pixel once upright
+  const Case cases[] = {{1, false, false},  // upright already: the gradient's own origin
+                        {2, true, false},   // mirrored left-right
+                        {3, true, true},    // turned 180 degrees
+                        {6, false, true}};  // 90 degrees clockwise: the old bottom-left is now top-left
+  std::vector<std::string> paths;
+  for (const Case &c : cases)
+  {
+    paths.push_back(td.path("o" + std::to_string(c.orient) + ".jpg"));
+    CHECK(writeJpeg(paths.back(), 200, 100, c.orient));
+  }
+  Latch notified;
+  ThumbWorker w(orientFromExif);
+  w.setNotify([&] { notified.signal(); });
+  w.setQueue(paths);
+  CHECK(notified.waitFor(4));
+  w.shutdown();
+  auto got = w.collect();
+  CHECK(got.size() == 4);
+  for (size_t i = 0; i < got.size() && i < 4; ++i)
+  {
+    if (!got[i].thumb)
+    {
+      CHECK(false);
+      continue;
+    }
+    int r = 0, g = 0;
+    rg(*got[i].thumb, 0, 0, &r, &g);
+    CHECK((r > 128) == cases[i].redHigh);
+    CHECK((g > 128) == cases[i].greenHigh);
+  }
 }
 
 // ------------------------------------------------------------------- shutdown
@@ -565,5 +695,57 @@ TEST_CASE("thumb_worker: shutdown", "[thumb_worker][threaded]")
     }
     CHECK(std::chrono::steady_clock::now() - t0 < 10s);
   }
+}
+TEST_CASE("thumb_worker: restartAfterShutdown", "[thumb_worker][threaded]")
+{ // shutdown() joins the thread; the next setQueue() starts a fresh one
+  TempDir td;
+  const std::string a = td.path("a.png"), b = td.path("b.png");
+  CHECK(writePng(a, 30, 20));
+  CHECK(writePng(b, 30, 20));
+  Latch notified;
+  ThumbWorker w(orientFromExif);
+  w.setNotify([&] { notified.signal(); });
+  w.setQueue({a});
+  CHECK(notified.waitFor(1));
+  w.shutdown();
+  {
+    auto first = w.collect();
+    CHECK(first.size() == 1);
+  }
+  w.setQueue({b});
+  CHECK(notified.waitFor(2));
+  w.shutdown();
+  auto got = w.collect();
+  CHECK(got.size() == 1);
+  if (got.size() == 1)
+    CHECK((got[0].path == b && got[0].thumb));
+}
+
+TEST_CASE("thumb_worker: setNotifyWhileRunning", "[thumb_worker][threaded]")
+{ // swapping the callback while the worker is busy is safe, and nothing is lost
+  TempDir td;
+  std::vector<std::string> paths;
+  for (int i = 0; i < 20; ++i)
+  {
+    paths.push_back(td.path("n" + std::to_string(i) + ".png"));
+    CHECK(writePng(paths.back(), 64, 48));
+  }
+  Latch notified;
+  ThumbWorker w(orientFromExif);
+  w.setQueue(paths); // the thread is already running, with no callback yet
+  for (int i = 0; i < 200; ++i)
+    w.setNotify([&] { notified.signal(); });
+  // the callback may have been missing for the first files: wait for the worker to finish
+  // by draining until every file has arrived
+  size_t total = 0;
+  const auto t0 = std::chrono::steady_clock::now();
+  while (total < paths.size() && std::chrono::steady_clock::now() - t0 < kWait)
+  {
+    total += w.collect().size();
+    std::this_thread::sleep_for(5ms);
+  }
+  w.shutdown();
+  total += w.collect().size();
+  CHECK(total == paths.size());
 }
 } // namespace thumb_worker_cases

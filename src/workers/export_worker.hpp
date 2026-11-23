@@ -17,8 +17,20 @@
 // 24 MP picture stops within a few rows). Every dropped picture still gets an
 // outcome (cancelled = true) so the UI can say how many were not exported.
 //
+// Failure handling: no exception may leave the worker thread (an uncaught one
+// in a std::jthread is std::terminate, which would end the whole app in the
+// middle of a batch). exportPicture itself still throws (it is a plain
+// function, and its tests should see real exceptions); the worker is the
+// boundary. A picture whose export throws (bad_alloc on a large 16-bit
+// picture is the realistic case) becomes an ordinary failed outcome with a
+// reason, and the batch carries on with the next picture. Every picture
+// gets exactly one count in done_, whatever happens, or busy() would never
+// turn false again.
+//
 // Thread model: start(), cancel(), busy(), collect(), shutdown() are called
-// from the UI thread only. setNotify() must be called before the first start().
+// from the UI thread only. setNotify() may be called at any time: the worker
+// takes its own copy of the callback under the lock and calls that copy
+// outside it.
 #pragma once
 #include "core/geometry.hpp"
 #include "core/image16_convert.hpp"
@@ -41,16 +53,20 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <set>
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // Largest sidecar a batch will read: the same limit the editor puts on one.
@@ -151,7 +167,7 @@ inline std::string exportTargetPath(const std::string &folder,
 // ERROR here, unlike in the editor, which opens such a picture clean: silently
 // exporting an unedited picture in the middle of a batch would be worse than
 // skipping it with a reason.
-inline bool exportLoadEdits(const std::string &path, int w, int h,
+inline bool exportLoadEdits(const std::string &path, int w, int h, 
                             AdjustmentSet *adj, std::string *err) {
   const std::filesystem::path p = fsPath(sidecarFileOf(path));
   std::error_code ec;
@@ -218,6 +234,9 @@ inline bool exportLoadEdits(const std::string &path, int w, int h,
 // pair (both may be null / 0 for a synchronous call); once superseded the
 // outcome is `cancelled` and nothing is written. `used` holds the output names
 // already taken by this batch.
+//
+// May throw (std::bad_alloc, a library exception). ExportWorker::runOne is the
+// boundary that turns that into a failed outcome.
 inline ExportOutcome
 exportPicture(const std::string &path, const ExportSettings &s,
               std::set<std::string> &used,
@@ -327,28 +346,46 @@ exportPicture(const std::string &path, const ExportSettings &s,
 // One batch at a time, one picture at a time, in the order given.
 class ExportWorker {
 public:
-  ExportWorker() = default;
+  // What exports one picture. exportPicture itself, unless a test passes
+  // something else (a function that throws, say) to exercise the failure
+  // boundary in runOne() below.
+  using ExportFn = std::function<ExportOutcome(
+      const std::string &, const ExportSettings &, std::set<std::string> &,
+      const std::atomic<uint64_t> *, uint64_t)>;
+
+  explicit ExportWorker(ExportFn fn = {})
+      : exportFn_(fn ? std::move(fn) : ExportFn(&exportPicture)) {}
   ExportWorker(const ExportWorker &) = delete;
   ExportWorker &operator=(const ExportWorker &) = delete;
   ~ExportWorker() { shutdown(); }
 
-  void setNotify(std::function<void()> fn) { notify_ = std::move(fn); }
+  // May be called at any time (see the thread model above). The old callback
+  // is destroyed after the lock is released.
+  void setNotify(std::function<void()> fn) {
+    std::lock_guard lk(m_);
+    notify_.swap(fn);
+  }
 
   // Queues `paths` with `settings`. False (nothing changed) while a batch is
-  // still running or when `paths` is empty.
+  // still running or when `paths` is empty. Everything that can run out of
+  // memory (the settings copy, the queue) is built BEFORE anything changes, so
+  // a failure leaves the worker as it was and busy() cannot get stuck.
   bool start(std::vector<std::string> paths, ExportSettings settings) {
     if (paths.empty() || busy())
       return false;
+    auto shared = std::make_shared<const ExportSettings>(std::move(settings));
+    std::deque<std::string> q(std::make_move_iterator(paths.begin()),
+                              std::make_move_iterator(paths.end()));
+    const size_t n = q.size();
     if (!thread_.joinable())
       thread_ = std::jthread([this](std::stop_token st) { run(st); });
     {
       std::lock_guard lk(m_);
-      settings_ = std::move(settings);
+      settings_ = std::move(shared);
       used_.clear(); // the worker is idle (busy() was false), so this is safe
-      total_.store(paths.size());
+      queue_ = std::move(q);
+      total_.store(n);
       done_.store(0);
-      queue_.assign(std::make_move_iterator(paths.begin()),
-                    std::make_move_iterator(paths.end()));
     }
     cv_.notify_one();
     return true;
@@ -364,7 +401,11 @@ public:
       ExportOutcome o;
       o.path = std::move(p);
       o.cancelled = true;
-      results_.push_back(std::move(o));
+      try {
+        results_.push_back(std::move(o));
+      } catch (...) {
+        // Out of memory: the picture is still counted below, like in run().
+      }
     }
     done_.fetch_add(queue_.size());
     queue_.clear();
@@ -386,6 +427,8 @@ public:
   }
 
   // Stops and joins. The picture in flight is abandoned, the queue dropped.
+  // The dropped pictures are counted as done, so busy() is false afterwards
+  // and a new start() works again.
   void shutdown() {
     {
       std::lock_guard lk(m_);
@@ -396,13 +439,72 @@ public:
       thread_.request_stop();
       thread_.join();
     }
+    std::lock_guard lk(m_); // the worker is gone: nothing else counts now
+    done_.store(total_.load());
   }
 
 private:
+  // Wakes the UI. The callback is copied under the lock (setNotify may run at
+  // any time) and called outside it, so a slow or re-entrant callback never
+  // blocks start() / cancel() / collect(). Copying a std::function can throw,
+  // so it sits inside the try with the call. A failing wake-up must not end the
+  // worker (same rule as LatestWorker).
+  void wake() {
+    try {
+      std::function<void()> fn;
+      {
+        std::lock_guard lk(m_);
+        fn = notify_;
+      }
+      if (fn)
+        fn();
+    } catch (...) {
+    }
+  }
+
+  // Exports one picture and never throws: whatever exportPicture throws
+  // becomes a failed outcome carrying the reason. Worker thread only.
+  ExportOutcome runOne(const std::string &path, const ExportSettings &s,
+                       uint64_t gen) {
+    ExportOutcome o;
+    try {
+      return exportFn_(path, s, used_, &epoch_, gen);
+    } catch (const std::bad_alloc &) {
+      o = ExportOutcome{};
+      o.path = path;
+      o.error = "ran out of memory";
+      if (!s.resize)
+        o.error += " (try turning on Resize";
+      if (!s.jpeg && s.png16)
+        o.error += s.resize ? " (try exporting as 8-bit)"
+                            : ", or export as 8-bit)";
+      else if (!s.resize)
+        o.error += ")";
+    } catch (const std::exception &e) {
+      o = ExportOutcome{};
+      o.path = path;
+      o.error = e.what();
+      if (o.error.empty())
+        o.error = "unexpected error";
+    } catch (...) {
+      o = ExportOutcome{};
+      o.path = path;
+      o.error = "unexpected error";
+    }
+    // A picture that died because cancel() / shutdown() was pressed
+    // mid-flight is not a failure: it is "not exported", like the rest of
+    // the queue.
+    if (epoch_.load() != gen) {
+      o.cancelled = true;
+      o.error.clear();
+    }
+    return o;
+  }
+
   void run(std::stop_token st) {
     for (;;) {
       std::string path;
-      ExportSettings s;
+      std::shared_ptr<const ExportSettings> s; // a copy of the pointer: cannot throw
       uint64_t gen = 0;
       {
         std::unique_lock lk(m_);
@@ -413,22 +515,42 @@ private:
         s = settings_;
         gen = epoch_.load();
       }
-      ExportOutcome o = exportPicture(path, s, used_, &epoch_, gen);
+      ExportOutcome o;
+      try {
+        o = runOne(path, *s, gen);
+      } catch (...) {
+        // runOne builds strings in its handlers; if even that runs out of
+        // memory the picture is still counted, with whatever fits.
+        o = ExportOutcome{};
+        try {
+          o.path = path;
+          o.error = "unexpected error";
+        } catch (...) {
+        }
+      }
       {
         std::lock_guard lk(m_);
-        results_.push_back(std::move(o));
-        done_.fetch_add(1); // with the push, under the lock: see collect()
+        // The outcome and the count go in together, under the lock: see
+        // collect(). If storing the outcome fails (out of memory), the
+        // picture is still counted as done, so busy() cannot get stuck;
+        // the UI then sees fewer outcomes than pictures, which only makes
+        // its tallies short, never hangs it.
+        try {
+          results_.push_back(std::move(o));
+        } catch (...) {
+        }
+        done_.fetch_add(1);
       }
-      if (notify_)
-        notify_();
+      wake();
     }
   }
 
-  std::mutex m_; // guards queue_, results_, settings_
+  ExportFn exportFn_; // set once, in the constructor
+  std::mutex m_;      // guards queue_, results_, settings_, notify_
   std::condition_variable_any cv_;
   std::deque<std::string> queue_;
   std::vector<ExportOutcome> results_;
-  ExportSettings settings_;
+  std::shared_ptr<const ExportSettings> settings_;
   std::set<std::string> used_; // worker thread only (cleared while idle)
   std::function<void()> notify_;
   std::atomic<uint64_t> epoch_{1}; // bumped by cancel(); polled by the render

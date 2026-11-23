@@ -1,13 +1,16 @@
-// app/render_update.hpp: handing the render worker's result back, drag preview, image refresh
+// app/render_update.hpp: handing the render worker's result back, drag preview,
+// image refresh
 //
 // UI-shell code split out of main.cpp. A plain move: nothing was changed.
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
+#include "../workers/latest_worker.hpp"
+
 // ---- Handing the worker's result back to the UI thread ----
 // The event loop sleeps until the OS hands it an event, and a worker finishing
-// is not one — so the worker announces itself: RenderWorker::notify_ (wired
+// is not one — so the worker announces itself: setNotify (wired
 // in main() to LiteUI::wake, which is safe from any thread) wakes the loop,
 // which polls the canvases, and collectFullRender() below picks the result up
 // from there. Nothing runs while no render is outstanding, so an idle editor
@@ -31,9 +34,31 @@ static void collectFullRender() {
 static void finishFullRender() {
   if (!renderWorker.outstanding())
     return;
-  adoptFullRender(renderWorker.waitForLatest());
-}
 
+  auto result = renderWorker.waitForLatest();
+
+  switch (result.status) {
+  case RenderWorker::WaitStatus::completed:
+    if (!result.value)
+      throw std::logic_error("RenderWorker completed without a result");
+
+    adoptFullRender(std::move(*result.value));
+    return;
+
+  case RenderWorker::WaitStatus::cancelled:
+    // Do not adopt an obsolete or abandoned render.
+    // The caller must not assume state.image was refreshed.
+    throw std::runtime_error("Render was cancelled before it completed");
+
+  case RenderWorker::WaitStatus::failed:
+    if (result.error)
+      std::rethrow_exception(result.error);
+
+    throw std::runtime_error("RenderWorker failed without an exception");
+  }
+
+  throw std::logic_error("Unknown RenderWorker wait status");
+}
 // A drag starts (or continues) on the preview path. A full-resolution render
 // still in flight would be for values the drag is about to change, so drop it.
 static void enterDrag(bool isAngle) {
@@ -113,4 +138,3 @@ static void updatePreviewFromAdjustments() {
   state.histStale = true;
   state.markDirty();
 }
-

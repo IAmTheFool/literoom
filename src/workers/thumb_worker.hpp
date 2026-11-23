@@ -11,6 +11,15 @@
 // A different kind of worker from LatestWorker: it is a FIFO queue with no
 // generations - setQueue() replaces what is still to do, the item in flight
 // finishes, and results accumulate until collect() drains them.
+//
+// Failure handling: no exception may leave the worker thread (an uncaught one
+// in a std::jthread is std::terminate, and this worker runs on every file of
+// a folder as soon as it is opened). A picture that throws while it is being
+// decoded or thumbnailed (bad_alloc on a huge file, a library throw on a
+// corrupt one) gets a null thumb, exactly like a file that could not be
+// decoded. Its sidecar is read separately, so the "edited" dot and the rating
+// survive a failed decode, and a sidecar that throws counts as edited, like
+// one that is present but unreadable.
 #pragma once
 #include "core/geometry.hpp"   // Orient
 #include "core/raster_ops.hpp" // orientImage
@@ -29,11 +38,13 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 constexpr int kFilmThumbW = 96, kFilmThumbH = 72;
@@ -44,7 +55,7 @@ constexpr std::streamoff kThumbMaxSidecarBytes = std::streamoff{64} << 20;
 
 // The sidecar's text; false if there is no file, it is empty, too big or
 // unreadable. *exists says whether the file was there at all.
-inline bool readSidecarForThumb(const std::string &imagePath, std::string *text,
+inline bool readSidecarForThumb(const std::string &imagePath, std::string *text, 
                                 bool *exists) {
   const std::filesystem::path p = fsPath(sidecarFileOf(imagePath));
   std::error_code ec;
@@ -120,14 +131,18 @@ public:
 
   // `orientOf` says how a file's camera rotation (EXIF) turns it upright. The
   // app passes its own EXIF reader, so thumbnails are turned exactly like the
-  // editor turns the picture.
+  // editor turns the picture. It is called on the worker thread, so it must be
+  // safe to call from there.
   using OrientFn = std::function<Orient(const std::string &)>;
   explicit ThumbWorker(OrientFn orientOf) : orientOf_(std::move(orientOf)) {}
   ThumbWorker(const ThumbWorker &) = delete;
   ThumbWorker &operator=(const ThumbWorker &) = delete;
   ~ThumbWorker() { shutdown(); }
 
-  void setNotify(std::function<void()> fn) { notify_ = std::move(fn); }
+  void setNotify(std::function<void()> fn) {
+    std::lock_guard lk(m_);
+    notify_ = std::move(fn);
+  }
 
   void shutdown() {
     {
@@ -159,18 +174,16 @@ public:
   }
 
 private:
-  void run(std::stop_token st) {
-    for (;;) {
-      std::string path;
-      {
-        std::unique_lock lk(m_);
-        if (!cv_.wait(lk, st, [this] { return !queue_.empty(); }))
-          return;
-        path = std::move(queue_.front());
-        queue_.pop_front();
-      }
-      Result r;
-      r.path = path;
+  // Everything made for one file. Worker thread only. Never throws what the
+  // picture or its sidecar throw: the two halves are guarded separately, so a
+  // failure in one does not cost the facts of the other.
+  Result makeResult(const std::string &path) {
+    Result r;
+    r.path = path;
+
+    // Half 1: the picture. A failure leaves `thumb` null ("couldn't be
+    // decoded"), and the strip shows its placeholder.
+    try {
       std::string err;
       const std::string real =
           vcImageOf(path); // the picture file behind a copy
@@ -186,23 +199,69 @@ private:
           r.thumb = makeThumb(*turned);
         }
       }
+    } catch (...) {
+      r.thumb.reset();
+      r.thumbSkipped = false; // a copy that threw is still just "no thumb"
+    }
+
+    // Half 2: the sidecar. Present but unusable (too big, unreadable, or it
+    // threw while being scanned) counts as edited, with no meta.
+    bool exists = false;
+    try {
+      std::string text;
+      if (readSidecarForThumb(path, &text, &exists)) {
+        const SidecarScan s = sidecarScan(text);
+        r.edited = s.edited;
+        r.meta = s.meta;
+      } else
+        r.edited = exists;
+    } catch (...) {
+      r.edited = exists;
+      r.meta = PhotoMeta{};
+    }
+    return r;
+  }
+
+  void run(std::stop_token st) {
+    for (;;) {
+      std::string path;
       {
-        std::string text;
-        bool exists = false;
-        if (readSidecarForThumb(path, &text, &exists)) {
-          const SidecarScan s = sidecarScan(text);
-          r.edited = s.edited;
-          r.meta = s.meta;
-        } else
-          r.edited =
-              exists; // present but unreadable / too big: counts as edited
+        std::unique_lock lk(m_);
+        if (!cv_.wait(lk, st, [this] { return !queue_.empty(); }))
+          return;
+        path = std::move(queue_.front());
+        queue_.pop_front();
       }
-      {
-        std::lock_guard lk(m_);
-        results_.push_back(std::move(r));
+
+      // Backstop: makeResult already contains what the picture and its
+      // sidecar can throw, but copying the path or pushing the result can
+      // still run out of memory, and nothing may leave this thread.
+      try {
+        Result r = makeResult(path);
+        {
+          std::lock_guard lk(m_);
+          results_.push_back(std::move(r));
+        }
+      } catch (...) {
+        continue; // this file gets no result; the next one is still made
       }
-      if (notify_)
-        notify_();
+
+      // The callback is copied under the lock, so setNotify() may run at any
+      // time, and called outside it, so a slow or re-entrant callback never
+      // blocks setQueue()/collect()/shutdown(). Copying a std::function can
+      // throw (bad_alloc), hence it sits inside the try with the call.
+      try {
+        std::function<void()> notify;
+        {
+          std::lock_guard lk(m_);
+          notify = notify_;
+        }
+        if (notify)
+          notify();
+      } catch (...) {
+        // A failing wake-up must not end the worker (same rule as
+        // LatestWorker).
+      }
     }
   }
 

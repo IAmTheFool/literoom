@@ -1,9 +1,12 @@
-// app/geometry_worker.hpp: the background geometry worker and its UI-thread glue
+// app/geometry_worker.hpp: the background geometry worker and its UI-thread
+// glue
 //
 // UI-shell code split out of main.cpp. A plain move: nothing was changed.
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include "../workers/latest_worker.hpp"
 
 // BEGIN geometryworker
 // ---------------- Background geometry worker ----------------
@@ -197,16 +200,43 @@ static void adoptGeometryBundle(GeometryWorker::Result &&r) {
 // Non-blocking; polled once per frame from flushPendingAdjust, alongside
 // collectFullRender.
 static void collectGeometryJob() {
-  if (auto r = geometryWorker.collect())
-    adoptGeometryBundle(std::move(*r));
+  try {
+    if (auto r = geometryWorker.collect())
+      adoptGeometryBundle(std::move(*r));
+  } catch (const std::exception &e) {
+    setStatus(std::string("Rebuild failed: ") + e.what(), /*isError=*/true);
+  }
 }
-
 // Blocking: makes every field a geometry rebuild touches current. For the
 // one place that needs the real pixels *now* (export).
 static void finishGeometryJob() {
   if (!geometryWorker.outstanding())
     return;
-  adoptGeometryBundle(geometryWorker.waitForLatest());
+
+  auto result = geometryWorker.waitForLatest();
+
+  switch (result.status) {
+  case GeometryWorker::WaitStatus::completed:
+    if (!result.value)
+      throw std::logic_error("GeometryWorker completed without a result");
+
+    adoptGeometryBundle(std::move(*result.value));
+    return;
+
+  case GeometryWorker::WaitStatus::cancelled:
+    // The bundle is obsolete or was abandoned. Do not partially
+    // update geometry-related EditorState fields.
+    throw std::runtime_error(
+        "Geometry rebuild was cancelled before completion");
+
+  case GeometryWorker::WaitStatus::failed:
+    if (result.error)
+      std::rethrow_exception(result.error);
+
+    throw std::runtime_error("GeometryWorker failed without an exception");
+  }
+
+  throw std::logic_error("Unknown GeometryWorker wait status");
 }
 
 // True while a crop/rotate/flip/straighten rebuild is still running. Until
@@ -216,4 +246,3 @@ static void finishGeometryJob() {
 // Apply Crop reading the selection) would compute from stale sizes. Those
 // edits are ignored while this is true; their buttons are dimmed to match.
 static bool geometryBusy() { return geometryWorker.outstanding(); }
-

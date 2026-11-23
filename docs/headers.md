@@ -2459,20 +2459,23 @@ Glue between `file_utils.hpp`, `virtual_copy.hpp`, `exif.hpp` and `geometry.hpp`
 ### `latest_worker.hpp`
 `LatestWorker<Job, Value>`: one background thread that runs "latest wins" jobs. It replaces the hand-written render, geometry, decode and segment workers, which all implemented the same protocol. The Sync Settings batch also runs on one, though it never cancels it (see [threading.md](threading.md#the-sync-worker-is-a-batch-that-is-never-superseded)). See [threading.md](threading.md). No UI.
 
-**Depends on:** standard library only (`std::jthread`). **Test:** `cases/latest_worker.inc` (timing-sensitive: run it in a loop to shake out flakiness).
+**Depends on:** standard library only (`std::jthread`, `<stop_token>`). **Test:** `cases/latest_worker.inc` (timing-sensitive: run it in a loop to shake out flakiness).
 
 **The protocol**
-- Every `submit()` and `invalidate()` bumps a generation number. Only the newest request can win: a newer submit replaces a job still waiting, and a running job polls the number to abandon itself.
+- Every `submit()` and `invalidate()` bumps a generation number. Only the newest request can win: a newer submit replaces a job still waiting (one that was superseded while queued is never started), and a running job polls the number to abandon itself.
 - A finished value is parked under a lock and re-checked against the newest generation, so a result invalidated while it finished is never delivered.
-- The UI thread is woken by the notify callback **outside** the lock, so it can't deadlock on the worker's mutex.
-- **Thread model:** every public member is called from **one** thread (the UI thread). The worker thread, started lazily by the first `submit()`, only runs the job function and touches the parked slot.
+- **A job that throws does not end the worker.** The exception is caught on the worker thread (an uncaught one in a `std::jthread` is `std::terminate`) and parked like a value. It is delivered when the result is taken: `collect()` rethrows it, `waitForLatest()` reports `failed` with the `std::exception_ptr`. The failure of a superseded job is discarded like any stale result.
+- **A job that returns `std::nullopt` is abandoned.** Nothing is parked and the notify callback does not run, but the worker records the generation as abandoned, so `collect()` and `waitForLatest()` can tell "gave up" from "still running".
+- The UI thread is woken by the notify callback **outside** the lock, so it can't deadlock on the worker's mutex. A callback that throws is swallowed: a failing wake-up must not end the worker.
+- **Thread model:** every public member is called from **one** thread (the UI thread), with two exceptions. `waitForLatest()` may also be called from a helper thread (`outstanding_` is an atomic for that reason; the generation counter is not). `setNotify()` may be called at any time. The worker thread, started lazily by the first `submit()`, only runs the job function and touches the parked slot.
 
 **Types**
 - `struct WorkerCancel`
-  - `std::atomic<uint64_t> *latest` and `uint64_t gen`: the raw atomic and this job's generation, so existing cancellable routines (`renderWith`, `rotateArbitrary`, `segmentObjectWand`) keep their `(const std::atomic<uint64_t>* latest, uint64_t gen)` parameters. Pass `c.latest, c.gen`.
+  - `const std::atomic<uint64_t> *latest` and `uint64_t gen`: the raw atomic and this job's generation, so existing cancellable routines (`renderWith`, `rotateArbitrary`, `segmentObjectWand`) keep their `(const std::atomic<uint64_t>* latest, uint64_t gen)` parameters. Pass `c.latest, c.gen`.
   - `bool cancelled() const`: true once a newer `submit()`/`invalidate()`/`shutdown()` has superseded this job.
-- `template <class Job, class Value> class LatestWorker`, with aliases `JobType`, `Result`, `Cancel` (= `WorkerCancel`), and
-  `using JobFn = std::function<std::optional<Value>(Job &&, Cancel)>`: runs on the worker thread. Return `std::nullopt` to say "abandoned" (nothing is parked or notified). A job that can't be cancelled simply always returns a value (a failure value, if need be).
+- `template <class Job, class Value> class LatestWorker`, with aliases `JobType`, `Result` (= `Value`), `Cancel` (= `WorkerCancel`), `Exception` (= `std::exception_ptr`), and
+  `using JobFn = std::function<std::optional<Value>(Job &&, Cancel)>`: runs on the worker thread. Return `std::nullopt` to say "abandoned" (nothing is parked or notified). A job that can't be cancelled simply always returns a value (a failure value, if need be). A job may also throw (see the protocol).
+- `enum class WaitStatus { completed, cancelled, failed }` and `struct WaitResult { WaitStatus status; std::optional<Value> value; std::exception_ptr error; }`: what `waitForLatest()` returns. `value` is set only for `completed`, `error` only for `failed`.
 
 **Members**
 
@@ -2480,24 +2483,30 @@ Glue between `file_utils.hpp`, `virtual_copy.hpp`, `exif.hpp` and `geometry.hpp`
 
 **`~LatestWorker()`**: marks shutdown so a running job bails at its next poll; the `std::jthread` (declared last, so destroyed first) requests stop and joins.
 
-**`void setNotify(std::function<void()> fn)`**: callback run **on the worker thread** each time a result has been parked. Call it **before the first `submit()`**; the thread is created by `submit`, so it then sees the value without extra synchronization.
+**`void setNotify(std::function<void()> fn)`**: callback run **on the worker thread** each time a result has been parked, a value or a failure (not after an abandoned job). It may be set or replaced at any time: the worker takes its own copy under the lock and calls that copy outside it, and the old callback is destroyed after the lock is released.
 
-**`void shutdown()`**: stops the worker and joins it; afterwards the notify callback never runs again. Blocks until a running job that ignores `Cancel` has finished.
+**`void shutdown()`**: stops the worker and joins it; afterwards the notify callback never runs again. Nothing is outstanding any more, and a `waitForLatest()` that was blocked returns `cancelled`. Blocks until a running job that ignores `Cancel` has finished.
 
-**`void submit(Job job)`**: starts the thread if needed, queues `job`, and supersedes any earlier one (waiting or running). Sets `outstanding()` to true.
+**`void submit(Job job)`**: starts the thread if needed, queues `job`, and supersedes any earlier one (waiting or running); a result or abandoned mark left by the earlier one is cleared. Sets `outstanding()` to true.
 
-**`void invalidate()`**: forgets whatever is waiting or running; its result will never be taken. Sets `outstanding()` to false.
+**`void invalidate()`**: forgets whatever is waiting or running; its result will never be taken. Sets `outstanding()` to false and wakes a blocked `waitForLatest()`, which returns `cancelled`.
 
-**`bool outstanding() const`**: true from `submit()` until its result has been taken or `invalidate()`.
+**`bool outstanding() const`**: true from `submit()` until its result has been taken, or `invalidate()` or `shutdown()`. It also goes false when `collect()` or `waitForLatest()` finds that the job was abandoned, so after a job returns `nullopt` it stays true until one of them runs (nothing wakes the UI for an abandoned job).
 
 **`std::optional<Value> collect()`**
 - Non-blocking. Returns the finished result of the newest request if it is ready (and clears `outstanding()`); otherwise `std::nullopt`. Always `nullopt` when nothing is outstanding. A parked result from an older generation is discarded.
+- If the newest job was **abandoned** (returned `nullopt`), it returns `nullopt` and clears `outstanding()`.
+- If the newest job **threw**, the request is consumed (`outstanding()` false) and the exception is **rethrown** from `collect()`, on the calling thread and after the lock is released. A caller that can't tolerate that wraps the call in `try`.
 
-**`Value waitForLatest()`**
-- Blocking. Waits for the newest request to finish and returns its value. **Only call while `outstanding()`**: after `invalidate()` nothing would ever wake it.
+**`WaitResult waitForLatest()`**
+- Blocking. Waits for the request that is latest **when the call is made**; it never switches to a newer one. May be called from a helper thread.
+- `completed`: the request produced a value (in `value`; taken, so `outstanding()` goes false). `failed`: the job threw (the exception is in `error`, not rethrown; the request is consumed). `cancelled`: the request was superseded by a newer `submit()`, invalidated, shut down, or abandoned by returning `nullopt` (an abandoned request also clears `outstanding()`).
+- With nothing outstanding (never submitted, invalidated, shut down, or the result already taken) it returns `cancelled` **at once** instead of blocking on a generation that can never finish. This replaces the old rule that it must only be called while `outstanding()`.
 
 ### `thumb_worker.hpp`
 The filmstrip's thumbnails, made off the UI thread: `makeThumb` box-averages a picture to fit 96 × 72, and `ThumbWorker` decodes a queue of files, thumbnails them, and reads each one's sidecar for whether it holds real edits and for its rating, flag and color label. A first-in-first-out queue with **no generations**, so **not** a `LatestWorker`. (Needs LiteUI's decoder.)
+
+**Failure handling.** No exception leaves the worker thread (an uncaught one in a `std::jthread` is `std::terminate`, and this worker runs on every file of a folder as soon as it is opened). A picture that throws while it is decoded or thumbnailed (`bad_alloc` on a huge file, a library throw on a corrupt one) gets a null `thumb`, exactly like a file that could not be decoded. Its sidecar is read separately, so the "edited" dot and the rating survive a failed decode; and a sidecar that throws counts as edited, like one that is present but unreadable.
 
 **Depends on:** `liteui.hpp` (`CanvasImage`), `image_source.hpp` (`decodeForThumb`), `geometry.hpp`, `raster_ops.hpp` (`orientImage`), `file_utils.hpp` (`fsPath`), `sidecar.hpp` (`sidecarFileOf`, `sidecarScan`), `photo_meta.hpp`, `virtual_copy.hpp` (`vcImageOf`, `vcCopyOf`). **Test:** `cases/thumb_worker.inc`.
 
@@ -2512,15 +2521,15 @@ The filmstrip's thumbnails, made off the UI thread: `makeThumb` box-averages a p
 
 **`class ThumbWorker`** (non-copyable)
 
-- `struct Result { std::string path; std::shared_ptr<const CanvasImage> thumb; bool thumbSkipped = false; bool edited = false; PhotoMeta meta; }`: `thumb` is **null if the file couldn't be decoded** (the result is still delivered, with its `meta`); `thumbSkipped` is true for a **virtual copy** (its path has the `|vc<n>` marker), which is read for its sidecar only: no decode, `thumb` null on purpose, and the caller must not count it as a failure; `edited` is true if the picture's sidecar holds real edits (a sidecar that exists only because the picture was rated gives false; one that is unreadable, too big (over 64 MiB) or has no `edits` still gives true); `meta` is the rating, flag and color label from that sidecar (the default if there is none or it can't be read).
+- `struct Result { std::string path; std::shared_ptr<const CanvasImage> thumb; bool thumbSkipped = false; bool edited = false; PhotoMeta meta; }`: `thumb` is **null if the file couldn't be decoded**, or if decoding or thumbnailing threw (the result is still delivered, with its `meta`); `thumbSkipped` is true for a **virtual copy** (its path has the `|vc<n>` marker), which is read for its sidecar only: no decode, `thumb` null on purpose, and the caller must not count it as a failure (a copy whose handling threw is just "no thumb", with `thumbSkipped` false); `edited` is true if the picture's sidecar holds real edits (a sidecar that exists only because the picture was rated gives false; one that is unreadable, too big (over 64 MiB), has no `edits`, or throws while it is scanned still gives true, the last three with the default `meta`); `meta` is the rating, flag and color label from that sidecar (the default if there is none or it can't be read).
 - `using OrientFn = std::function<Orient(const std::string &)>`: says how a file's camera rotation turns it upright. The app passes its own EXIF reader (`exifOrientationOf`), so thumbnails are turned exactly like the editor turns the picture.
 - **`explicit ThumbWorker(OrientFn orientOf)`**: no thread yet.
 - **`~ThumbWorker()`**: calls `shutdown()`.
-- **`void setNotify(std::function<void()> fn)`**: called **on the worker thread** after each result is stored. Set it before the first `setQueue()`.
+- **`void setNotify(std::function<void()> fn)`**: called **on the worker thread** after each result is stored. May be called at any time: the worker copies it under the lock and calls the copy outside it, so a slow or re-entrant callback never blocks `setQueue()`, `collect()` or `shutdown()`. A callback that throws is swallowed.
 - **`void setQueue(std::vector<std::string> paths)`**: replaces what is still to do (starting the thread on first use). The file being processed finishes; results already made stay until collected. Call it again whenever the open picture changes so the work starts next to it.
 - **`std::vector<Result> collect()`**: returns everything made since the last call and empties the list. Thread-safe, non-blocking.
 - **`void shutdown()`**: clears the queue, requests stop and joins the thread.
-- Per file, the worker: decodes it (`image_source::decodeForThumb` on `vcImageOf(path)`; skipped for a virtual copy), applies the orientation from `orientOf` (also given the real file's path), makes the thumbnail, then reads the sidecar (`readSidecarForThumb` through `sidecarFileOf`, so a copy reads its own file; at most 64 MiB) and runs `sidecarScan` on it.
+- Per file, the worker: decodes it (`image_source::decodeForThumb` on `vcImageOf(path)`; skipped for a virtual copy), applies the orientation from `orientOf` (also given the real file's path), makes the thumbnail, then reads the sidecar (`readSidecarForThumb` through `sidecarFileOf`, so a copy reads its own file; at most 64 MiB) and runs `sidecarScan` on it. The picture half and the sidecar half are guarded separately (see Failure handling). As a last backstop, if even copying the path or storing the result runs out of memory, that file gets **no** result and the next one is still made.
 
 ---
 
@@ -2542,7 +2551,7 @@ The chain is the geometry worker's: orient -> straighten -> crop, from the untou
 
 **`inline bool renderForExport(std::shared_ptr<CanvasImage> original, const ExportGeometry &g, const RenderParams &rp, bool want16, const std::atomic<uint64_t> *latest, uint64_t gen, ExportPixels *out)`**: renders an 8-bit original. `want16` false gives `out->img8` via `renderWith`; true gives `out->img16` via `renderToImage16(source, rp, ...)` (the source is its own 8-bit view).
 
-**`inline bool renderForExport(std::shared_ptr<Image16> original, const ExportGeometry &g, const RenderParams &rp, bool want16, const std::atomic<uint64_t> *latest, uint64_t gen, ExportPixels *out)`**: renders a 16-bit original. `want16` false gives `out->img8` via `renderToDisplay`; true gives `out->img16` via `renderToImage16`. Both pass a **null** `view8`, so if a neighbor effect is in use a temporary 8-bit view is made once for this render (fine for a single export; it is only slow for repeated renders).
+**`inline bool renderForExport(std::shared_ptr<Image16> original, const ExportGeometry &g, const RenderParams &rp, bool want16, const std::atomic<uint64_t> *latest, uint64_t gen, ExportPixels *out)`**: renders a 16-bit original. `want16` false gives `out->img8` via `renderToDisplay`; true gives `out->img16` via `renderToImage16`. Both pass a **null** `view8`, which costs nothing: the neighbor effects read the source at its own precision now (see `render_core.hpp`), so no 8-bit view is made.
 
 - Both overloads: `latest` / `gen` are the usual cancellation pair (`latest` may be null). Returns **false when superseded**, or when the render produced nothing; `*out` then holds no picture (it is reset to empty once the geometry is built, and left untouched if the geometry itself was superseded). True means exactly one of `out->img8` / `out->img16` is set. `out` must not be null.
 - The caller's `original` is taken by value and **moved** in, never modified; when the geometry does nothing (identity orientation, angle 0, empty crop) the render reads the original directly, with no copy.
@@ -2552,7 +2561,7 @@ The chain is the geometry worker's: orient -> straighten -> crop, from the untou
 ### `export_worker.hpp`
 Batch export: `exportPicture` renders one picture from its own saved edits and writes it, and `ExportWorker` runs a queue of them off the UI thread. A first-in-first-out queue with **no generations** (like `ThumbWorker`) that can be cancelled. (Needs LiteUI's decoder and encoders.)
 
-**Depends on:** `liteui.hpp`, `geometry.hpp`, `raster_ops.hpp`, `adjustment_set.hpp`, `render.hpp`, `file_utils.hpp`, `image_codec.hpp`, `image_codec16.hpp`, `image_meta.hpp`, `image_source.hpp`, `color_tag.hpp`, `minijson.hpp`, `sidecar.hpp`, `virtual_copy.hpp`, `export_render.hpp`, and through `adjustment_set.hpp` the LUT library. **Test:** `cases/export_worker.inc` (timing-sensitive: loop it after changing the header).
+**Depends on:** `liteui.hpp`, `geometry.hpp`, `image16_convert.hpp`, `raster_ops.hpp`, `adjustment_set.hpp`, `render.hpp`, `file_utils.hpp`, `image_codec16.hpp`, `image_meta.hpp`, `image_source.hpp`, `color_tag.hpp`, `minijson.hpp`, `sidecar.hpp`, `virtual_copy.hpp`, `export_render.hpp`, and through `adjustment_set.hpp` the LUT library. **Test:** `cases/export_worker.inc` (timing-sensitive: loop it after changing the header).
 
 **Constants:** `kExportMaxSidecarBytes` (`std::streamoff`) = 64 MiB (the limit the editor puts on a sidecar).
 
@@ -2564,7 +2573,7 @@ Batch export: `exportPicture` renders one picture from its own saved edits and w
 **Functions**
 
 **`inline bool saveJpegFile(const std::string &path, const CanvasImage &img, int quality, bool keepMetadata, bool removeGps, const std::string &sourcePath, std::string *errorOut)`**
-- Encodes `img` as a JPEG (quality clamped to 1..100) with `encodeJpegMemory`, then calls `embedSourceMetadata(&jpeg, sourcePath, w, h, removeGps && keepMetadata, /*iccOnly=*/!keepMetadata)` and writes it with `writeFileAtomic`. So the source's **ICC profile always rides along** (the editor converts no pixels, so without it a Display P3 or Adobe RGB picture would be read as sRGB; a profile is not personal data), while the **EXIF block comes only with `keepMetadata`** (orientation reset, size updated), with the GPS cut out when `removeGps` is also on (`removeGps` is ignored without `keepMetadata`). The result of `embedSourceMetadata` is ignored: a source that is not a JPEG just gives a JPEG with no metadata. Returns false with `*errorOut` set if the encode or the write fails (including a picture `jpegSizeOk` refuses). Shared by the editor's single Export and the batch (it used to live in `main.cpp`).
+- Turns `img` into an `ImageBuffer` with `toImageBuffer` (an empty picture fails with *"nothing to write"*), encodes it as a JPEG (quality clamped to 1..100) with `liteui_image::encodeJpegMemory`, then calls `embedSourceMetadata(&jpeg, sourcePath, w, h, removeGps && keepMetadata, /*iccOnly=*/!keepMetadata)` and writes it with `writeFileAtomic`. So the source's **ICC profile always rides along** (the editor converts no pixels, so without it a Display P3 or Adobe RGB picture would be read as sRGB; a profile is not personal data), while the **EXIF block comes only with `keepMetadata`** (orientation reset, size updated), with the GPS cut out when `removeGps` is also on (`removeGps` is ignored without `keepMetadata`). The result of `embedSourceMetadata` is ignored: a source that is not a JPEG just gives a JPEG with no metadata. Returns false with `*errorOut` set if the encode or the write fails (including a picture `jpegSizeOk` refuses). Shared by the editor's single Export and the batch (it used to live in `main.cpp`).
 
 **`inline std::string exportStemOf(const std::string &path)`**
 - Returns: the picture's file name without its extension; `"export"` if that is empty; `-copy<n>` appended for a virtual copy's path (`photo.jpg|vc2` gives `photo-copy2`). A leading dot is kept (`.hidden`).
@@ -2580,30 +2589,38 @@ Batch export: `exportPicture` renders one picture from its own saved edits and w
   1. **Decode** `vcImageOf(path)` with `image_source::openUpright` (`want8 = false`). A PNG whose header says 16 bits is read at full precision and stays 16-bit; everything else (JPEG, 8-bit PNG) stays 8-bit. A file that can't be read (missing, truncated, corrupt) fails here with the message the editor shows for it: both open a file through the same `openUpright`. The EXIF rotation is applied, which gives the upright "original" the saved edits are stored against.
   2. **Edits:** load them into a **local** `AdjustmentSet` with `exportLoadEdits`, then freeze `buildRenderParams()`.
   3. **Render:** `renderForExport` (see [`export_render.hpp`](#export_renderhpp)) does orient -> straighten -> crop -> render from the untouched original, with `want16 = !s.jpeg && s.png16`. So a 16-bit source written as JPEG or 8-bit PNG is rendered down to 8 bits, and an 8-bit source with `png16` on is rendered to 16 bits.
-  4. **Size:** `fitLongEdge` gives the final size (never enlarging). For a JPEG, `jpegSizeOk` is checked on that **final** size, **before** the resize; then `ExportPixels::resizeToLongEdge`.
-  5. **Write:** a free name from `exportTargetPath` (`.jpg` or `.png`), then the encode: `encodePng16File` when the result is 16-bit, `saveJpegFile` for a JPEG, otherwise `encodePngFile`. The JPEG gets the **real** file's (the one behind a copy) ICC profile always and its EXIF only with `keepMetadata` (`removeGps` only counts when `keepMetadata` is also on; see `saveJpegFile`). After a PNG (8- or 16-bit) is written, `color_tag::carryColorToPng(target, real)` copies the source's color tags into it (best effort; its result is ignored here).
+  4. **Size:** `fitLongEdge` gives the final size (never enlarging). For a JPEG, `liteui_image::jpegSizeOk` is checked on that **final** size, **before** the resize; then `ExportPixels::resizeToLongEdge`.
+  5. **Write:** a free name from `exportTargetPath` (`.jpg` or `.png`), then the encode: `saveJpegFile` for a JPEG; otherwise `liteui_image::encodePng` on an `ImageBuffer` that `toImageBuffer` makes from whichever of `img16` / `img8` is set (the buffer's format says 8 or 16 bits per channel), with `exportPngOptions()`. An empty buffer fails with *"nothing to write"*. The JPEG gets the **real** file's (the one behind a copy) ICC profile always and its EXIF only with `keepMetadata` (`removeGps` only counts when `keepMetadata` is also on; see `saveJpegFile`). After a PNG (8- or 16-bit) is written, `color_tag::dropEncoderColor(target)` runs and then `color_tag::carryColorToPng(target, real)` copies the source's color tags into it (best effort; neither result is used here).
 - Cancellation: `latest` / `gen` are the usual pair (both may be null / 0 for a synchronous call). Once superseded the outcome is `cancelled` and **nothing is written**. It is polled before the decode, after the decode, inside `renderForExport`, and after the resize. It is **not** polled during the encode, so a picture that has reached the encoder is finished.
-- Failures come back as an outcome with `error` set; the function never throws for them. The messages: *"couldn't open it: <decoder's reason>"*, whatever `exportLoadEdits` said, *"too large for JPEG (turn on Resize, or export as PNG)"*, *"no free file name in the folder"*, and the encoder's own message when writing fails (or *"couldn't write <file name>"* if it gave none).
+- Failures come back as an outcome with `error` set for the expected cases. The messages: *"couldn't open it: <decoder's reason>"*, whatever `exportLoadEdits` said, *"too large for JPEG (turn on Resize, or export as PNG)"*, *"no free file name in the folder"*, and the encoder's own message when writing fails (or *"couldn't write <file name>"* if it gave none).
+- **`exportPicture` itself may throw** (`std::bad_alloc` on a large 16-bit picture is the realistic case, or a library exception). It is a plain function, so its tests see real exceptions; `ExportWorker` is the boundary that turns a throw into a failed outcome (see below).
 
-**`class ExportWorker`** (non-copyable). **Thread model:** `start()`, `cancel()`, `busy()`, `collect()` and `shutdown()` from the UI thread only; `setNotify()` before the first `start()`. The worker thread (a `std::jthread`) starts at the first `start()` and handles one picture at a time, in the order given.
+**`class ExportWorker`** (non-copyable). **Thread model:** `start()`, `cancel()`, `busy()`, `collect()` and `shutdown()` from the UI thread only; `setNotify()` may be called at any time. The worker thread (a `std::jthread`) starts at the first `start()` and handles one picture at a time, in the order given.
 
+**Failure boundary.** No exception leaves the worker thread (an uncaught one in a `std::jthread` is `std::terminate`, which would end the whole app in the middle of a batch). Whatever `exportPicture` throws becomes an ordinary failed outcome with a reason, and the batch carries on with the next picture:
+- `std::bad_alloc` gives *"ran out of memory"* plus a hint: *" (try turning on Resize)"* when Resize is off, *" (try turning on Resize, or export as 8-bit)"* when Resize is off and the export is a 16-bit PNG, and *" (try exporting as 8-bit)"* when only the 16-bit PNG applies. With Resize on and no 16-bit PNG there is no hint.
+- Any other `std::exception` gives its `what()` (*"unexpected error"* if that is empty); anything else gives *"unexpected error"*.
+- A picture that died because `cancel()` or `shutdown()` ran mid-flight is not a failure: its outcome is `cancelled` and its `error` is cleared.
+- Every picture gets **exactly one count** in `done()`, whatever happens (even if storing its outcome runs out of memory, in which case the UI sees fewer outcomes than pictures), or `busy()` would never turn false again.
+
+- **`using ExportFn = std::function<ExportOutcome(const std::string &, const ExportSettings &, std::set<std::string> &, const std::atomic<uint64_t> *, uint64_t)>`** and **`explicit ExportWorker(ExportFn fn = {})`**: what exports one picture. An empty function means `exportPicture`; a test passes something else (one that throws, say) to exercise the failure boundary.
 - **`~ExportWorker()`**: calls `shutdown()`.
-- **`void setNotify(std::function<void()> fn)`**: called **on the worker thread** after each result is stored. Set it before the first `start()`.
-- **`bool start(std::vector<std::string> paths, ExportSettings settings)`**: queues the batch (starting the thread on first use). False, with nothing changed, if `paths` is empty or a batch is still running. The set of used output names (`used`) is cleared here, so names are only de-duplicated within one batch (against each other, and against files already in the folder unless `overwrite`).
-- **`void cancel()`**: drops what is still queued (each picture gets a `cancelled` outcome), bumps the epoch that `renderWith` and `rotateArbitrary` poll so the picture in flight is abandoned, and returns at once. A picture that had already been written stays written.
-- **`bool busy() const`**: true from `start()` until every picture has an outcome. `size_t total() const` and `size_t done() const` give the progress.
+- **`void setNotify(std::function<void()> fn)`**: called **on the worker thread** after each result is stored. May be called at any time: the worker copies it under the lock and calls the copy outside it, and the old callback is destroyed after the lock is released. A callback that throws is swallowed.
+- **`bool start(std::vector<std::string> paths, ExportSettings settings)`**: queues the batch (starting the thread on first use). False, with nothing changed, if `paths` is empty or a batch is still running. Everything that can run out of memory (the settings copy, the queue) is built **before** anything changes, so a failure leaves the worker as it was and `busy()` cannot get stuck. The set of used output names (`used`) is cleared here, so names are only de-duplicated within one batch (against each other, and against files already in the folder unless `overwrite`).
+- **`void cancel()`**: drops what is still queued (each picture gets a `cancelled` outcome, and is counted as done even if recording that outcome runs out of memory), bumps the epoch that `renderWith` and `rotateArbitrary` poll so the picture in flight is abandoned, and returns at once. A picture that had already been written stays written.
+- **`bool busy() const`**: true from `start()` until every picture is counted (`done() == total()`). `size_t total() const` and `size_t done() const` give the progress.
 - **`std::vector<ExportOutcome> collect()`**: every outcome made since the last call, in the order they finished, and empties the list. **Call `busy()` first**: if it was already false, these are the last outcomes. Asking after `collect()` could miss a result that lands in between.
-- **`void shutdown()`**: clears the queue, abandons the picture in flight, requests stop and joins. Safe to call twice. It is for teardown: pictures still queued are simply dropped **without** an outcome (unlike `cancel()`), so `done()` never reaches `total()` and `busy()` stays true afterwards; only the picture in flight still gets its (cancelled) outcome.
+- **`void shutdown()`**: clears the queue, abandons the picture in flight, requests stop and joins. Safe to call twice. It is for teardown: pictures still queued are simply dropped **without** an outcome (unlike `cancel()`); only the picture in flight still gets its (cancelled) outcome. The dropped pictures are counted as done (`done()` is set to `total()` after the join), so `busy()` is false afterwards and a new `start()` works again.
 
 ### `lut_preview_worker.hpp`
 The LUTs pane's previews, made off the UI thread: each LUT of the library applied to the open picture. One job is the picture, its current look and a list of LUT files; the worker posts one result per file. See [threading.md](threading.md#the-lut-preview-worker-streams-results-for-the-newest-job).
 
-**Depends on:** `liteui.hpp` (`CanvasImage`), `color_pass.hpp`, `lut3d.hpp`, `render_params.hpp`, `lut_cube.hpp`, `lut_library.hpp`, `render.hpp`, `thumb_worker.hpp` (`makeThumb`, `kFilmThumbW` / `kFilmThumbH`). **Tests:** `cases/lut_preview_worker.inc` (timing-sensitive: loop it after changing the header); `tests/lut_pane_test.cpp` also runs the real worker through the pane's per-frame poll. **Thread model:** `submit()`, `cancel()`, `busy()`, `collect()` and `shutdown()` from the UI thread only; `setNotify()` before the first `submit()`. The worker thread starts at the first `submit()`.
+**Depends on:** `liteui.hpp` (`CanvasImage`), `color_pass.hpp`, `lut3d.hpp`, `render_params.hpp`, `lut_cube.hpp`, `lut_library.hpp`, `render.hpp`, `thumb_worker.hpp` (`makeThumb`, `kFilmThumbW` / `kFilmThumbH`). **Tests:** `cases/lut_preview_worker.inc` (timing-sensitive: loop it after changing the header); `tests/lut_pane_test.cpp` also runs the real worker through the pane's per-frame poll. **Thread model:** `submit()`, `cancel()`, `busy()`, `collect()` and `shutdown()` from the UI thread only; `setNotify()` may be called at any time (the worker copies the callback under the lock and calls the copy outside it; the old one is destroyed after the lock is released; a throwing callback is swallowed). The worker thread starts at the first `submit()`.
 
 **Types**
 
 - **`struct LutPreviewJob { uint64_t serial; std::shared_ptr<const CanvasImage> base; RenderParams params; std::vector<LutEntry> items; }`**: `base` is the picture to preview on (null: no thumbnails, the files are still read); `params` its current look (its own LUT, if any, is replaced); `items` the files (name and path; truncated to `kLutMaxFiles`).
-- **`struct LutPreviewResult { uint64_t serial; std::string name, path; std::shared_ptr<const CanvasImage> thumb; uint64_t hash; int size; std::string warning, error; }`**: `thumb` is null when there is no picture or the file is unusable; `hash` and `size` are 0 and `error` is set (the loader's message, which names the file) when it could not be read; `warning` is `lutExpectationWarning`'s sentence or `""`.
+- **`struct LutPreviewResult { uint64_t serial; std::string name, path; std::shared_ptr<const CanvasImage> thumb; uint64_t hash; int size; std::string warning, error; }`**: `thumb` is null when there is no picture, the file is unusable, or its preview could not be rendered (see Failure handling); `hash` and `size` are 0 and `error` is set (the loader's message, which names the file) when it could not be read; `warning` is `lutExpectationWarning`'s sentence or `""`.
 
 **`inline RenderParams lutPreviewParams(const RenderParams &in, const LutPass &lut)`**: the look a preview is rendered with: `in` with `color` replaced by `colorPassWithLut(in.color, lut)` and **without the neighbor effects** (`fx` and every mask's `fx` emptied). They are invisible at thumbnail size, and leaving them out means a preview never touches the shared detail-plane cache the main render uses. Everything else is kept: tone, curves, color, Mixer, grading, Filters, masks, Vignette and Grain. A function of its own so the tests build the same reference.
 
@@ -2613,6 +2630,12 @@ The LUTs pane's previews, made off the UI thread: each LUT of the library applie
 - **`std::vector<LutPreviewResult> collect()`**: every result made since the last call, in the order made, which is the order of `items`.
 - **`void shutdown()`**: stops and joins; safe to call twice. The destructor calls it.
 - Per job the worker box-averages the picture **once** to the filmstrip's thumbnail size (`makeThumb`), then for each file: `loadLutFile` (**never the cache**, so a hundred previews cannot push out the table in use), `lutPreviewParams` with the table at 100 %, `renderWith`. The notify callback runs after each result and when the job ends.
+
+**Failure handling.** No exception leaves the worker thread (an uncaught one in a `std::jthread` is `std::terminate`). Each LUT is guarded on its own, so one bad file does not stop the previews of the others:
+- A file that throws while it is read or parsed becomes an ordinary unusable file, with `error` in the same *"<name>: <reason>"* form the parser's own messages use (the pane strips the name): *"<name>: not enough memory to read it"* for `bad_alloc`, *"<name>: <what()>"* for any other `std::exception`, *"<name>: unexpected error"* otherwise. It has no hash, size or thumbnail.
+- A LUT that reads fine but throws while its preview is rendered (out of memory) keeps its hash, size and warning and simply has no thumbnail: the file is not at fault, so it stays usable. A render that hands back nothing without having been superseded does the same.
+- If the shared thumbnail (`makeThumb`) can't be made, every row just has no thumbnail; hash, size and warning still arrive.
+- Whatever happens, `busy()` returns to false: the worker's `running_` flag is reset even after an unexpected throw outside those guards.
 
 ---
 

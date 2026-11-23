@@ -10,13 +10,20 @@
 #include "workers/export_worker.hpp"
 #include "cases/encode_helpers.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
+#include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -124,6 +131,20 @@ static bool waitIdle(ExportWorker &w)
 {
   const auto t0 = std::chrono::steady_clock::now();
   while (w.busy())
+  {
+    if (std::chrono::steady_clock::now() - t0 > kWait)
+      return false;
+    std::this_thread::sleep_for(2ms);
+  }
+  return true;
+}
+
+// Waits until the wake-up counter has reached `n`. The last wake-up runs just AFTER the last
+// picture is counted, so busy() turning false does not yet mean it has happened.
+static bool waitWakes(const std::atomic<int> &wakes, int n)
+{
+  const auto t0 = std::chrono::steady_clock::now();
+  while (wakes.load() < n)
   {
     if (std::chrono::steady_clock::now() - t0 > kWait)
       return false;
@@ -340,7 +361,7 @@ TEST_CASE("export_worker: batch", "[export_worker][threaded]")
   CHECK(w.busy());
   CHECK(!w.start(paths, pngSettings(out))); // one batch at a time
   CHECK(waitIdle(w));
-  CHECK(wakes >= 6);
+  CHECK(waitWakes(wakes, 6));
   auto got = w.collect();
   CHECK(got.size() == 6);
   for (size_t i = 0; i < got.size() && i < paths.size(); ++i)
@@ -557,11 +578,175 @@ TEST_CASE("export_worker: shutdown", "[export_worker][threaded]")
     CHECK(w.start(paths, pngSettings(out)));
     w.shutdown();
     w.shutdown(); // twice is fine
+    CHECK(!w.busy()); // what it dropped counts as done
   }
   { // destruction with work queued doesn't hang either
     ExportWorker w;
     CHECK(w.start(paths, pngSettings(out)));
   }
   CHECK(std::chrono::steady_clock::now() - t0 < kWait);
+}
+// ------------------------------------------------ the failure boundary (injected picture function)
+static ExportWorker::ExportFn quickFn()
+{
+  return [](const std::string &p, const ExportSettings &, std::set<std::string> &,
+            const std::atomic<uint64_t> *, uint64_t) -> ExportOutcome
+  {
+    ExportOutcome o;
+    o.path = p;
+    o.ok = true;
+    return o;
+  };
+}
+
+TEST_CASE("export_worker: throwingPictureBecomesFailedOutcome", "[export_worker][threaded]")
+{ // whatever a picture throws is an ordinary failed outcome, and the batch goes on
+  TempDir out;
+  ExportWorker w([](const std::string &p, const ExportSettings &, std::set<std::string> &,
+                    const std::atomic<uint64_t> *, uint64_t) -> ExportOutcome
+                 {
+                   if (p == "oom")
+                     throw std::bad_alloc();
+                   if (p == "err")
+                     throw std::runtime_error("disk exploded");
+                   if (p == "blank")
+                     throw std::runtime_error("");
+                   if (p == "weird")
+                     throw 42;
+                   ExportOutcome o;
+                   o.path = p;
+                   o.ok = true;
+                   return o; });
+  CHECK(w.start({"oom", "err", "blank", "weird", "fine"}, pngSettings(out)));
+  CHECK(waitIdle(w));
+  auto got = w.collect();
+  CHECK(got.size() == 5);
+  if (got.size() == 5)
+  {
+    for (int i = 0; i < 4; ++i)
+      CHECK((!got[i].ok && !got[i].cancelled));
+    CHECK(got[0].error == "ran out of memory (try turning on Resize)");
+    CHECK(got[1].error == "disk exploded");
+    CHECK(got[2].error == "unexpected error"); // an exception with no message
+    CHECK(got[3].error == "unexpected error"); // not even a std::exception
+    CHECK((got[4].ok && got[4].path == "fine")); // the batch carried on
+  }
+  CHECK(w.done() == w.total());
+}
+
+TEST_CASE("export_worker: outOfMemoryAdvice", "[export_worker][threaded]")
+{ // the advice depends on what the user can still turn on
+  struct Case { bool jpeg, png16, resize; const char *want; };
+  const Case cases[] = {
+      {false, false, false, "ran out of memory (try turning on Resize)"},
+      {false, true, false, "ran out of memory (try turning on Resize, or export as 8-bit)"},
+      {false, true, true, "ran out of memory (try exporting as 8-bit)"},
+      {true, false, false, "ran out of memory (try turning on Resize)"},
+      {true, false, true, "ran out of memory"},
+      {false, false, true, "ran out of memory"}};
+  TempDir out;
+  ExportWorker w([](const std::string &, const ExportSettings &, std::set<std::string> &,
+                    const std::atomic<uint64_t> *, uint64_t) -> ExportOutcome
+                 { throw std::bad_alloc(); });
+  for (const Case &c : cases)
+  {
+    ExportSettings s = pngSettings(out);
+    s.jpeg = c.jpeg;
+    s.png16 = c.png16;
+    s.resize = c.resize;
+    CHECK(w.start({"x"}, s));
+    CHECK(waitIdle(w));
+    auto got = w.collect();
+    CHECK(got.size() == 1);
+    if (got.size() == 1)
+      CHECK(got[0].error == c.want);
+  }
+}
+
+TEST_CASE("export_worker: cancelledInFlightIsNotAFailure", "[export_worker][threaded]")
+{ // a picture that dies because cancel() was pressed is "not exported", not an error
+  TempDir out;
+  Gate started, release;
+  ExportWorker w([&](const std::string &, const ExportSettings &, std::set<std::string> &,
+                     const std::atomic<uint64_t> *, uint64_t) -> ExportOutcome
+                 {
+                   started.open();
+                   release.wait();
+                   throw std::runtime_error("died while being abandoned"); });
+  CHECK(w.start({"x", "y"}, pngSettings(out)));
+  CHECK(started.wait());
+  w.cancel();     // "y" is dropped at once; "x" is in flight
+  release.open(); // ...and "x" dies with an exception
+  CHECK(waitIdle(w));
+  auto got = w.collect();
+  CHECK(got.size() == 2);
+  for (const auto &o : got)
+    CHECK((o.cancelled && !o.ok && o.error.empty()));
+  CHECK(w.done() == w.total());
+}
+
+TEST_CASE("export_worker: restartAfterShutdown", "[export_worker][threaded]")
+{ // shutdown() counts what it dropped, so busy() is false and a new batch can start
+  TempDir out;
+  Gate started;
+  std::atomic<bool> hold{true};
+  ExportWorker w([&](const std::string &p, const ExportSettings &, std::set<std::string> &,
+                     const std::atomic<uint64_t> *latest, uint64_t gen) -> ExportOutcome
+                 {
+                   ExportOutcome o;
+                   o.path = p;
+                   if (hold)
+                   {
+                     started.open();
+                     const auto end = std::chrono::steady_clock::now() + kWait;
+                     while (latest->load() == gen && std::chrono::steady_clock::now() < end)
+                       std::this_thread::yield();
+                     o.cancelled = true; // abandoned
+                     return o;
+                   }
+                   o.ok = true;
+                   return o; });
+  CHECK(w.start({"a", "b", "c"}, pngSettings(out)));
+  CHECK(started.wait());
+  w.shutdown(); // abandons "a", drops "b" and "c"
+  CHECK(!w.busy());
+  hold = false;
+  CHECK(w.start({"d"}, pngSettings(out)));
+  CHECK(waitIdle(w));
+  bool sawD = false;
+  for (const auto &o : w.collect())
+    if (o.path == "d")
+      sawD = o.ok;
+  CHECK(sawD);
+  w.shutdown();
+}
+
+TEST_CASE("export_worker: throwingNotifyDoesNotEndWorker", "[export_worker][threaded]")
+{
+  TempDir out;
+  ExportWorker w(quickFn());
+  std::atomic<int> wakes{0};
+  w.setNotify([&]
+              {
+                ++wakes;
+                throw std::runtime_error("wake-up failed"); });
+  CHECK(w.start({"a", "b", "c"}, pngSettings(out)));
+  CHECK(waitIdle(w));
+  CHECK(w.collect().size() == 3);
+  CHECK(waitWakes(wakes, 3));
+}
+
+TEST_CASE("export_worker: setNotifyWhileRunning", "[export_worker][threaded]")
+{ // swapping the callback while the worker is busy is safe (run under ThreadSanitizer to prove it)
+  TempDir out;
+  std::vector<std::string> paths;
+  for (int i = 0; i < 40; ++i)
+    paths.push_back("p" + std::to_string(i));
+  ExportWorker w(quickFn());
+  CHECK(w.start(paths, pngSettings(out)));
+  for (int i = 0; i < 200; ++i)
+    w.setNotify([] {});
+  CHECK(waitIdle(w));
+  CHECK(w.collect().size() == paths.size());
 }
 } // namespace export_worker_cases

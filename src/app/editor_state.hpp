@@ -237,6 +237,9 @@ struct EditorState {
                              // sidecar, not edits (see addSnapshot)
   bool snapshotsDirty =
       false; // snapshots changed since the last sidecar save / load
+  bool sidecarBlocked =
+      false; // the open picture's saved-edits file exists but could not be
+             // read (see loadSidecar): saveSidecar must not replace it
 
   // Export pane settings.
   bool exportJpeg = true;   // the format the Export dialog offers first

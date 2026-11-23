@@ -1,6 +1,7 @@
 // app/lut_pane.hpp: 3D LUT list, previews and cache
 //
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
+// UI-shell code split out of main.cpp. A plain move, apart from loadSidecar
+// (at the bottom), which now protects a saved-edits file it could not use.
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
@@ -313,41 +314,101 @@ static std::string lutCurrentText() {
   }
 }
 
+// Keeps a copy of a saved-edits file that is about to be ignored, as
+// "<sidecar>.bak", so that the edits the next autosave replaces it with can't
+// destroy what was in it. An existing .bak is left alone (the first copy is the
+// one worth keeping). True if the copy exists afterwards.
+static bool backUpIgnoredSidecar(const std::filesystem::path &sidecar) {
+  std::filesystem::path bak = sidecar;
+  bak += ".bak";
+  std::error_code ec;
+  std::filesystem::copy_file(sidecar, bak,
+                             std::filesystem::copy_options::skip_existing, ec);
+  return !ec;
+}
+
 // Applies the picture's saved edits, if it has any. Call right after
 // adjust.reset() + setOriginalSize() and BEFORE syncSource(), so the saved
 // crop / rotation is what gets built.
+//
+// A saved-edits file this function can't use must not be lost to the next
+// autosave, which would write the picture's (empty) edits over it. Two kinds:
+//  * UNREADABLE: the file is there but can't be opened, read or checked
+//    (locked by another program, no permission, too big). Its content is
+//    unknown and can't be copied either, so the picture is opened with
+//    state.sidecarBlocked set: nothing may write its sidecar until the picture
+//    is opened again (see the notes in saved_edits.hpp).
+//  * UNUSABLE: the file was read but can't be applied (damaged, written by a
+//    newer Literoom, made for a picture of another size, or its edits don't
+//    parse). It is copied to "<sidecar>.bak" first and the picture opens clean,
+//    as before. Only if even that copy fails does it count as unreadable.
 static void loadSidecar() {
   state.sidecarSaved = state.adjust.version(); // pristine unless loaded below
   state.meta = PhotoMeta{}; // unrated unless the file says so
   state.metaDirty = false;
   state.snapshots.clear(); // none unless the file has some
   state.snapshotsDirty = false;
+  state.sidecarBlocked = false; // set below if the file can't be touched safely
   dropLutCache(); // a LUT file may have changed since the last picture was open
-  std::ifstream f(sidecarPath(state.imagePath),
-                  std::ios::binary | std::ios::ate);
-  if (!f)
+
+  const std::filesystem::path sidecar = sidecarPath(state.imagePath);
+  constexpr std::streamoff kMaxSidecarBytes = std::streamoff{64} << 20;
+
+  // setStatus cuts a message at 110 characters, so the part that matters
+  // comes first.
+  const auto blocked = [&](const std::string &why) {
+    state.sidecarBlocked = true;
+    setStatus("Changes won't be saved: saved edits unreadable (" + why + ")",
+              true);
+  };
+  const auto unusable = [&](const std::string &why) {
+    if (backUpIgnoredSidecar(sidecar))
+      setStatus("Ignored saved edits: " + why + " (old file kept as .bak)",
+                true);
+    else
+      blocked("can't back up the old file");
+  };
+
+  std::error_code ec;
+  const bool exists = std::filesystem::exists(sidecar, ec);
+  if (ec) {
+    blocked("couldn't check the file");
+    return;
+  }
+  if (!exists)
     return; // no saved edits: the normal case
+
+  std::ifstream f(sidecar, std::ios::binary | std::ios::ate);
+  if (!f) {
+    blocked("couldn't open the file");
+    return;
+  }
   const std::streamoff n = f.tellg();
-  if (n <= 0 || n > (64 << 20)) {
-    setStatus("Ignored saved edits: unexpected file size", true);
+  if (n == 0) { // an empty file holds nothing to lose
+    setStatus("Ignored saved edits: the file is empty", true);
+    return;
+  }
+  if (n < 0 || n > kMaxSidecarBytes) {
+    blocked("unexpected file size");
     return;
   }
   std::string text(static_cast<size_t>(n), '\0');
   f.seekg(0);
   f.read(text.data(), n);
   if (!f) {
-    setStatus("Ignored saved edits: couldn't read the file", true);
+    blocked("couldn't read the file");
     return;
   }
+  f.close(); // the backup below copies the file: don't hold it open
   mj::Json root;
   std::string err;
   if (!mj::Json::parse(text, &root, &err)) {
-    setStatus("Ignored saved edits: " + err, true);
+    unusable(err);
     return;
   }
   const mj::Json *ver = root.find("version");
   if (!ver || !ver->isNumber() || ver->asNum(0) > kSidecarVersion) {
-    setStatus("Ignored saved edits: made by a newer Literoom", true);
+    unusable("made by a newer Literoom");
     return;
   }
   const mj::Json *img = root.find("image");
@@ -355,12 +416,12 @@ static void loadSidecar() {
       img->find("height") == nullptr ||
       img->find("width")->asNum(-1) != state.original->width ||
       img->find("height")->asNum(-1) != state.original->height) {
-    setStatus("Ignored saved edits: the picture's size has changed", true);
+    unusable("the picture's size has changed");
     return;
   }
   const mj::Json *edits = root.find("edits");
   if (!edits || !state.adjust.loadJson(*edits)) {
-    setStatus("Ignored saved edits: unreadable", true);
+    unusable("unreadable");
     return;
   }
   state.sidecarSaved = state.adjust.version();
@@ -373,4 +434,3 @@ static void loadSidecar() {
   noteLutProblem(); // a LUT the library no longer has (or has changed) is worth
                     // a word
 }
-

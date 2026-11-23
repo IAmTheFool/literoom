@@ -19,6 +19,7 @@
 #include <random>
 #include <thread>
 #include <vector>
+#include <stdexcept>
 
 namespace latest_worker_cases
 {
@@ -81,8 +82,10 @@ private:
 // Gives the worker time to run code that has no observable signal (e.g. the
 // bookkeeping after a job returns). Only used to let a NEGATIVE check bite: too
 // short a grace can hide a bug (a false pass), but can never fail a correct
-// worker.
-static void grace() { std::this_thread::sleep_for(100ms); }
+// worker. The one exception is a test that needs a helper thread to be
+// blocked inside waitForLatest() before the test goes on: there a late helper
+// can fail a correct worker, so such a test passes a longer grace.
+static void grace(std::chrono::milliseconds d = 100ms) { std::this_thread::sleep_for(d); }
 
 // Records which job ids actually started, in order.
 class Log
@@ -268,14 +271,16 @@ TEST_CASE("latest_worker: parkedResultDiscarded", "[latest_worker][threaded]")
     CHECK(notified.waitFor(1)); // 1's result is parked, not collected
     w.submit(2);                // must discard it
     CHECK(started.waitFor(2));  // job 2 is running, held at the gate
-    int got = -1;
     // waitForLatest blocks, so it runs on a helper thread (the test thread
     // opens the gate meanwhile). It must wait for job 2, not hand over job 1.
+    using R = IntWorker::WaitResult;
+    R got{IntWorker::WaitStatus::failed, std::nullopt, nullptr};
     std::thread t([&] { got = w.waitForLatest(); });
     grace();
     gate.open();
     t.join();
-    CHECK(got == 2);
+    CHECK(got.status == IntWorker::WaitStatus::completed);
+    CHECK((got.value && *got.value == 2));
     w.shutdown();
   }
   {
@@ -295,7 +300,9 @@ TEST_CASE("latest_worker: parkedResultDiscarded", "[latest_worker][threaded]")
     w.submit(2);
     CHECK(started.waitFor(2));
     gate.open();
-    CHECK(w.waitForLatest() == 2);
+    auto r = w.waitForLatest();
+    CHECK(r.status == IntWorker::WaitStatus::completed);
+    CHECK((r.value && *r.value == 2));
     w.shutdown();
   }
 }
@@ -368,8 +375,9 @@ TEST_CASE("latest_worker: waitForLatest", "[latest_worker][threaded]")
   w.submit(2);
   gate.open();
   CHECK(w.outstanding());
-  const int v = w.waitForLatest(); // job 1's result is superseded, so this is 2's
-  CHECK(v == 6);
+  const auto r = w.waitForLatest(); // waits for job 2 (the latest at call time)
+  CHECK(r.status == IntWorker::WaitStatus::completed);
+  CHECK((r.value && *r.value == 6));
   CHECK(!w.outstanding());
   CHECK(!w.collect().has_value());
   w.shutdown();
@@ -461,15 +469,16 @@ TEST_CASE("latest_worker: moveOnly", "[latest_worker][threaded]")
   CHECK((r && *r && **r == 42));
   w.submit(std::make_unique<int>(1));
   auto v = w.waitForLatest();
-  CHECK((v && *v == 2));
+  CHECK(v.status == W::WaitStatus::completed);
+  CHECK((v.value && *v.value && **v.value == 2));
   w.shutdown();
 }
 
 // --------------------------------------------------------------------- stress
 // 2000 submits mixed with random invalidates. Main is the only thread that
 // submits/invalidates/collects, so at the moment collect() hands over a value
-// the only legal one is that of the newest submit, and only if no invalidate
-// followed it.
+// the only legal one is that of the newest submit. (After an invalidate,
+// collect() returns nothing at all: nothing is outstanding.)
 TEST_CASE("latest_worker: stress", "[latest_worker][threaded]")
 {
   std::atomic<int> jobsRun{0};
@@ -488,31 +497,26 @@ TEST_CASE("latest_worker: stress", "[latest_worker][threaded]")
   w.setNotify([&] { ++notifies; });
   std::mt19937 rng(12345);
   int lastSubmit = 0;
-  bool liveSubmit = false; // a submit with no invalidate after it
   int delivered = 0, stale = 0;
   for (int id = 1; id <= 2000; ++id)
   {
     w.submit(id);
     lastSubmit = id;
-    liveSubmit = true;
     const unsigned dice = rng() % 8;
     if (dice == 0)
-    {
       w.invalidate();
-      liveSubmit = false;
-    }
     if (dice <= 3)
     {
       if (auto r = w.collect())
       {
         ++delivered;
-        if (!liveSubmit || *r != lastSubmit)
+        if (*r != lastSubmit)
           ++stale;
       }
     }
     if (dice == 4)
       std::this_thread::yield();
-    if (dice == 5 && liveSubmit)
+    if (dice == 5)
     { // let this one finish: nothing supersedes it while main waits
       std::optional<int> r;
       const auto end = std::chrono::steady_clock::now() + kWait;
@@ -529,8 +533,9 @@ TEST_CASE("latest_worker: stress", "[latest_worker][threaded]")
   }
   CHECK(stale == 0);
   w.submit(5000); // the last word
-  const int last = w.waitForLatest();
-  CHECK(last == 5000);
+  const auto last = w.waitForLatest();
+  CHECK(last.status == IntWorker::WaitStatus::completed);
+  CHECK((last.value && *last.value == 5000));
   CHECK(!w.outstanding());
   w.shutdown();
   const int jobs = jobsRun, n = notifies;
@@ -538,5 +543,140 @@ TEST_CASE("latest_worker: stress", "[latest_worker][threaded]")
   CHECK(n >= delivered + 1); // every delivered value was notified first
   CHECK(n <= jobs);
   std::printf("stress: %d jobs ran, %d notified, %d collected\n", jobs, n, delivered);
+}
+
+TEST_CASE("latest_worker: waitForLatestCancelledBySubmit", "[latest_worker][threaded]")
+{
+  Latch started;
+  Gate gate;
+  IntWorker w([&](int &&j, WorkerCancel) -> std::optional<int>
+              { started.signal(); if (j == 1) gate.wait(); return j; });
+  w.submit(1);
+  CHECK(started.waitFor(1));
+  IntWorker::WaitResult r{IntWorker::WaitStatus::completed, std::nullopt, nullptr};
+  std::thread t([&] { r = w.waitForLatest(); });
+  grace(300ms); // the helper must be waiting on job 1 before job 2 is submitted
+  w.submit(2);   // supersedes the request being waited on
+  gate.open();
+  t.join();
+  CHECK(r.status == IntWorker::WaitStatus::cancelled); // does NOT switch to job 2
+  CHECK(!r.value.has_value());
+  w.shutdown();
+}
+
+TEST_CASE("latest_worker: waitForLatestFailedAndAbandoned", "[latest_worker][threaded]")
+{
+  IntWorker w([](int &&j, WorkerCancel) -> std::optional<int>
+              { if (j == 1) throw std::runtime_error("boom");
+                if (j == 2) return std::nullopt;
+                return j; });
+  w.submit(1);
+  auto a = w.waitForLatest();
+  CHECK(a.status == IntWorker::WaitStatus::failed);
+  CHECK(a.error != nullptr);
+  CHECK(!w.outstanding());
+  w.submit(2);
+  auto b = w.waitForLatest();
+  CHECK(b.status == IntWorker::WaitStatus::cancelled);
+  w.shutdown();
+}
+// ------------------------------------------- failures, shutdown, nothing outstanding
+TEST_CASE("latest_worker: collectRethrows", "[latest_worker][threaded]")
+{
+  Latch notified;
+  IntWorker w([](int &&j, WorkerCancel) -> std::optional<int>
+              { if (j == 1) throw std::runtime_error("boom");
+                return j; });
+  w.setNotify([&] { notified.signal(); });
+  w.submit(1);
+  CHECK(notified.waitFor(1)); // a failure is announced like a result
+  CHECK_THROWS_AS(w.collect(), std::runtime_error);
+  CHECK(!w.outstanding());    // the request was consumed
+  CHECK(!w.collect().has_value());
+  w.submit(2);                // and the worker carries on
+  CHECK(notified.waitFor(2));
+  auto r = w.collect();
+  CHECK((r && *r == 2));
+  w.shutdown();
+}
+
+TEST_CASE("latest_worker: staleExceptionNotDelivered", "[latest_worker][threaded]")
+{ // a job that throws after being superseded is dropped, like a stale value
+  Latch started, notified;
+  Gate gate;
+  IntWorker w([&](int &&j, WorkerCancel) -> std::optional<int>
+              {
+                started.signal();
+                if (j == 1)
+                {
+                  gate.wait();
+                  throw std::runtime_error("stale");
+                }
+                return j; });
+  w.setNotify([&] { notified.signal(); });
+  w.submit(1);
+  CHECK(started.waitFor(1));
+  w.submit(2); // supersedes job 1 while it is held
+  gate.open(); // job 1 now throws: nobody wants it
+  CHECK(notified.waitFor(1));
+  std::optional<int> r;
+  CHECK_NOTHROW(r = w.collect());
+  CHECK((r && *r == 2));
+  w.shutdown();
+  CHECK(notified.count() == 1);
+}
+
+TEST_CASE("latest_worker: shutdownReleasesWaiter", "[latest_worker][threaded]")
+{ // shutdown() must wake a thread blocked in waitForLatest(), not just stop the worker
+  Latch started;
+  IntWorker w([&](int &&, WorkerCancel c) -> std::optional<int>
+              {
+                started.signal();
+                waitCancelled(c);
+                return std::nullopt; });
+  w.submit(1);
+  CHECK(started.waitFor(1));
+  IntWorker::WaitResult r{IntWorker::WaitStatus::failed, std::nullopt, nullptr};
+  std::thread t([&] { r = w.waitForLatest(); });
+  grace();
+  w.shutdown();
+  t.join();
+  CHECK(r.status == IntWorker::WaitStatus::cancelled);
+}
+
+TEST_CASE("latest_worker: waitWithNothingOutstanding", "[latest_worker][threaded]")
+{ // without the guard in waitForLatest() this test hangs instead of failing
+  IntWorker w([](int &&j, WorkerCancel) -> std::optional<int> { return j; });
+  CHECK(w.waitForLatest().status == IntWorker::WaitStatus::cancelled); // never submitted
+  w.submit(1);
+  w.invalidate();
+  CHECK(w.waitForLatest().status == IntWorker::WaitStatus::cancelled);
+  w.submit(2);
+  w.shutdown();
+  CHECK(!w.outstanding()); // nothing can arrive any more
+  CHECK(w.waitForLatest().status == IntWorker::WaitStatus::cancelled);
+}
+
+TEST_CASE("latest_worker: throwingNotifyAndRestart", "[latest_worker][threaded]")
+{
+  Latch notified;
+  IntWorker w([](int &&j, WorkerCancel) -> std::optional<int> { return j; });
+  w.setNotify([&]
+              {
+                notified.signal();
+                throw std::runtime_error("wake-up failed"); });
+  w.submit(1);
+  CHECK(notified.waitFor(1));
+  auto a = w.collect();
+  CHECK((a && *a == 1)); // the throw cost neither the result nor the worker
+  w.submit(2);
+  CHECK(notified.waitFor(2));
+  w.shutdown();
+  CHECK(!w.outstanding());
+  w.submit(3); // shutdown() joined the thread; submit() starts a fresh one
+  CHECK(notified.waitFor(3));
+  auto b = w.collect();
+  CHECK((b && *b == 3));
+  w.shutdown();
 }
 } // namespace latest_worker_cases

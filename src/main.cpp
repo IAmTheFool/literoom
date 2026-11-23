@@ -65,8 +65,8 @@
 #include "render/scopes.hpp"
 
 // background work
-#include "workers/export_worker.hpp"
-#include "workers/latest_worker.hpp"
+#include "workers/export_worker.hpp" 
+
 #include "workers/lut_preview_worker.hpp"
 #include "workers/thumb_worker.hpp"
 
