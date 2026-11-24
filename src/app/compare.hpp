@@ -10,14 +10,14 @@
 // "Before" is state.source: the picture with its crop and rotation but none
 // of the slider, curve, color or mask edits. Keeping the geometry means the
 // canvas doesn't change size, so the comparison is pixel for pixel.
-static void toggleBefore() {
+inline void toggleBefore() {
   if (!state.image)
     return;
   state.compare = state.compare == CompareMode::Before ? CompareMode::Off
                                                        : CompareMode::Before;
   state.markDirty();
 }
-static void toggleSplit() {
+inline void toggleSplit() {
   if (!state.image)
     return;
   state.compare = state.compare == CompareMode::Split ? CompareMode::Off
@@ -25,7 +25,7 @@ static void toggleSplit() {
   state.markDirty();
 }
 // Dragging in the canvas moves the split line.
-static void splitFromX(float localX) {
+inline void splitFromX(float localX) {
   const float w = state.docWidth() * state.zoom;
   if (w <= 0.0f)
     return;
@@ -34,7 +34,7 @@ static void splitFromX(float localX) {
 }
 
 // A small dark pill with `text`, its left (or, if alignRight, right) edge at x.
-static void paintCompareLabel(CanvasContext &ctx, const std::string &text,
+inline void paintCompareLabel(CanvasContext &ctx, const std::string &text,
                               float x, float y, bool alignRight) {
   ctx.setFont("", 12.0f, FontWeight::SemiBold);
   const float w = ctx.measureText(text).width + 16.0f, h = 22.0f;
@@ -50,7 +50,7 @@ static void paintCompareLabel(CanvasContext &ctx, const std::string &text,
 }
 
 // Screen-space decoration over the canvas: labels and the split line.
-static void paintCompareOverlay(CanvasContext &ctx) {
+inline void paintCompareOverlay(CanvasContext &ctx) {
   const float W = state.docWidth() * state.zoom;
   const float H = state.docHeight() * state.zoom;
   if (state.compare == CompareMode::Before) {
@@ -68,4 +68,3 @@ static void paintCompareOverlay(CanvasContext &ctx) {
   paintCompareLabel(ctx, "After", W - 10.0f, 10.0f, true);
 }
 // END compare
-

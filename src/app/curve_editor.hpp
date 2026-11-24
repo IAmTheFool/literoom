@@ -7,23 +7,23 @@
 
 // ---------------- Tone curve editor (canvas side) ----------------
 // Mapping between canvas-local screen px and curve units (0..255, y up).
-static float curvePlotPx() { return kCurveSizePx - 2.0f * kCurvePadPx; }
+inline float curvePlotPx() { return kCurveSizePx - 2.0f * kCurvePadPx; }
 
-static CurvePoint curveFromLocal(float lx, float ly) {
+inline CurvePoint curveFromLocal(float lx, float ly) {
   const float plot = curvePlotPx();
   return {
       std::clamp((lx - kCurvePadPx) / plot * 255.0f, 0.0f, 255.0f),
       std::clamp(255.0f - (ly - kCurvePadPx) / plot * 255.0f, 0.0f, 255.0f)};
 }
 
-static void curveToLocal(float x, float y, float &lx, float &ly) {
+inline void curveToLocal(float x, float y, float &lx, float &ly) {
   const float plot = curvePlotPx();
   lx = kCurvePadPx + x / 255.0f * plot;
   ly = kCurvePadPx + (255.0f - y) / 255.0f * plot;
 }
 
 // Index of the point within kCurveHitPx of (lx, ly), nearest wins; -1 if none.
-static int curveHit(const CurvePoints &pts, float lx, float ly) {
+inline int curveHit(const CurvePoints &pts, float lx, float ly) {
   int hit = -1;
   float best = kCurveHitPx * kCurveHitPx;
   for (size_t i = 0; i < pts.size(); ++i) {
@@ -38,10 +38,10 @@ static int curveHit(const CurvePoints &pts, float lx, float ly) {
   return hit;
 }
 
-static const CurvePoints &curveActiveCurve() {
+inline const CurvePoints &curveActiveCurve() {
   return state.adjust.curve(uiState.curve.channel);
 }
-static void curvePress(float lx, float ly) {
+inline void curvePress(float lx, float ly) {
   if (!state.original)
     return;
   CurvePoints pts = curveActiveCurve();
@@ -69,7 +69,7 @@ static void curvePress(float lx, float ly) {
   uiState.curve.uiDirty = true; // show the selected point
 }
 
-static void curveDrag(float lx, float ly) {
+inline void curveDrag(float lx, float ly) {
   if (uiState.curve.active < 0 || !state.original)
     return;
   CurvePoints pts = curveActiveCurve();
@@ -84,7 +84,7 @@ static void curveDrag(float lx, float ly) {
   state.markAdjustDirty();
 }
 
-static void curveEnd() {
+inline void curveEnd() {
   uiState.curve.active = -1;
   uiState.curve.uiDirty = true;
   state.adjust.endCurveEdit();
@@ -95,7 +95,7 @@ static void curveEnd() {
   }
 }
 
-static void curveRightPress(float lx, float ly) {
+inline void curveRightPress(float lx, float ly) {
   if (!state.original)
     return;
   CurvePoints pts = curveActiveCurve();
@@ -105,14 +105,14 @@ static void curveRightPress(float lx, float ly) {
   }
 }
 
-static void setCurveChannel(CurveChannel ch) {
+inline void setCurveChannel(CurveChannel ch) {
   uiState.curve.active = -1;
   uiState.curve.channel = ch;
   uiState.curve.uiDirty = true;
 }
 
 // Resets the curve being edited (one undo step).
-static void resetCurve() {
+inline void resetCurve() {
   uiState.curve.active = -1;
   state.adjust.setCurve(uiState.curve.channel, identityCurve(), false);
   uiState.curve.uiDirty = true;
@@ -120,14 +120,14 @@ static void resetCurve() {
 }
 
 // Resets all four curves (one undo step).
-static void resetAllCurves() {
+inline void resetAllCurves() {
   uiState.curve.active = -1;
   state.adjust.resetAllCurves();
   uiState.curve.uiDirty = true;
   state.markAdjustDirty();
 }
 
-static const char *curveChannelName(CurveChannel ch) {
+inline const char *curveChannelName(CurveChannel ch) {
   switch (ch) {
   case CurveChannel::Red:
     return "Red";
@@ -141,7 +141,7 @@ static const char *curveChannelName(CurveChannel ch) {
 }
 
 // Line/tint color for a curve: white for the master, channel color otherwise.
-static Color curveChannelColor(CurveChannel ch, uint8_t alpha) {
+inline Color curveChannelColor(CurveChannel ch, uint8_t alpha) {
   switch (ch) {
   case CurveChannel::Red:
     return Color{235, 70, 70, alpha};
@@ -155,7 +155,7 @@ static Color curveChannelColor(CurveChannel ch, uint8_t alpha) {
 }
 
 // The histogram that matches a curve: luma for the master, else that channel.
-static const std::array<uint32_t, 256> &curveHistogram(CurveChannel ch) {
+inline const std::array<uint32_t, 256> &curveHistogram(CurveChannel ch) {
   switch (ch) {
   case CurveChannel::Red:
     return state.histR;
@@ -171,7 +171,7 @@ static const std::array<uint32_t, 256> &curveHistogram(CurveChannel ch) {
 // Dark plot with the edited channel's histogram faintly behind it, a quarter
 // grid, the identity diagonal, every non-straight curve (the others dimmed in
 // their own color), and the edited curve's control points.
-static void paintCurve(CanvasContext &ctx) {
+inline void paintCurve(CanvasContext &ctx) {
   const float W = ctx.width(), H = ctx.height();
   const float pad = kCurvePadPx, plot = curvePlotPx();
   ctx.setFillColor(Color{34, 34, 38, 255});
@@ -248,4 +248,3 @@ static void paintCurve(CanvasContext &ctx) {
                    kCurvePointPx, kCurvePointPx);
   }
 }
-

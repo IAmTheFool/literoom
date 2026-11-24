@@ -12,12 +12,12 @@
 
 // Half-width of the square patch averaged around the click: 2 = 5 x 5 pixels,
 // so one noisy pixel cannot decide the result.
-constexpr int kWbPatchRadius = 2;
+inline constexpr int kWbPatchRadius = 2;
 
 // True while the picker is armed and still makes sense. It only works in the
 // Adjust pane (activity 1) on a shown picture, outside Before / After; once any
 // of those stops being true it disarms itself, so it can never wake up later.
-static bool wbPickerActive() {
+inline bool wbPickerActive() {
   if (!state.wbPicking)
     return false;
   if (state.activeActivity != kAdjustActivity || !state.image ||
@@ -28,7 +28,7 @@ static bool wbPickerActive() {
   return true;
 }
 
-static void toggleWbPicker() {
+inline void toggleWbPicker() {
   if (state.dragging)
     return;
   if (state.wbPicking) {
@@ -54,7 +54,7 @@ static void toggleWbPicker() {
 // will receive it: `source` (what the adjustments run on) through the current
 // tone tables, before any white balance. False if the point is outside the
 // picture or the patch has no visible pixel (straighten's empty corners).
-static bool wbSampleSpot(float lx, float ly, float out[3]) {
+inline bool wbSampleSpot(float lx, float ly, float out[3]) {
   const float docW = state.docWidth(), docH = state.docHeight();
   const CanvasImage *src = state.source.get();
   if (!src || src->width <= 0 || src->height <= 0 || docW <= 0.0f ||
@@ -94,7 +94,7 @@ static bool wbSampleSpot(float lx, float ly, float out[3]) {
 // the crop and mask tools never see it). A click that cannot be used (outside
 // the picture, too dark, clipped) keeps the picker armed so you can try again;
 // a pick that sets the white balance disarms it.
-static bool wbPress(float lx, float ly) {
+inline bool wbPress(float lx, float ly) {
   if (!wbPickerActive())
     return false;
   if (geometryBusy()) {

@@ -9,12 +9,12 @@
 // Row r shows step (n - 1 - r): newest at the top, the untouched picture at
 // the bottom. There are kMaxUndoSteps + 1 rows, shown only for steps that
 // exist (the view tree is built once, like the mask list).
-static size_t historyStepForRow(size_t r) {
+inline size_t historyStepForRow(size_t r) {
   const size_t n = state.adjust.historySize();
   return r < n ? n - 1 - r : n; // n = "no such step"
 }
 
-static void jumpToHistory(size_t step) {
+inline void jumpToHistory(size_t step) {
   if (state.dragging || step >= state.adjust.historySize() ||
       step == state.adjust.historyIndex())
     return;
@@ -23,7 +23,7 @@ static void jumpToHistory(size_t step) {
   updateImageFromAdjustments(); // same follow-up as undo() / redo()
 }
 
-static View buildHistoryRow(size_t r) {
+inline View buildHistoryRow(size_t r) {
   View b;
   b.style.width = Size::full();
   b.style.height = Size::pixel(26);
@@ -73,7 +73,7 @@ static View buildHistoryRow(size_t r) {
 // One row of the selected mask's PART list: "1   Radial", "2   Subtract:
 // Brush". Shown only while the mask has more than one part (a one-part mask
 // looks exactly as it always did).
-static View buildPartRow(size_t j) {
+inline View buildPartRow(size_t j) {
   View b;
   b.style.width = Size::full();
   b.style.height = Size::pixel(26);
@@ -121,7 +121,7 @@ static View buildPartRow(size_t j) {
 // A shape slider for the selected part. `get` / `set` see the shape
 // itself; `control` names the undo-coalescing control.
 template <class Shape>
-static SliderSpec maskShapeSlider(const char *name, float lo, float hi,
+inline SliderSpec maskShapeSlider(const char *name, float lo, float hi,
                                   std::function<float(const Shape &)> get,
                                   std::function<void(Shape &, float)> set,
                                   int control) {
@@ -153,14 +153,14 @@ static SliderSpec maskShapeSlider(const char *name, float lo, float hi,
   s.onEnd = [] { state.adjust.endMaskEdit(); };
   return s;
 }
-static SliderSpec
+inline SliderSpec
 maskRadialSlider(const char *name, float lo, float hi,
                  std::function<float(const RadialShape &)> get,
                  std::function<void(RadialShape &, float)> set, int control) {
   return maskShapeSlider<RadialShape>(name, lo, hi, std::move(get),
                                       std::move(set), control);
 }
-static SliderSpec
+inline SliderSpec
 maskLinearSlider(const char *name, float lo, float hi,
                  std::function<float(const LinearShape &)> get,
                  std::function<void(LinearShape &, float)> set, int control) {
@@ -170,7 +170,7 @@ maskLinearSlider(const char *name, float lo, float hi,
 
 // The mask's own copy of one Adjust slider (Exposure, Contrast, ...): one per
 // kAdjustmentSpecs entry, so a new global adjustment appears here too.
-static View buildMaskAdjustmentSlider(const AdjustmentSpec &spec) {
+inline View buildMaskAdjustmentSlider(const AdjustmentSpec &spec) {
   const AdjId id = spec.id;
   SliderSpec s;
   s.name = spec.label;
@@ -193,4 +193,3 @@ static View buildMaskAdjustmentSlider(const AdjustmentSpec &spec) {
   s.onEnd = [] { state.adjust.endMaskEdit(); };
   return buildSliderRow(s);
 }
-

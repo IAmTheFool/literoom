@@ -8,6 +8,7 @@
 // run on the main thread.
 
 #include "io/exif.hpp"
+#include "io/image_meta.hpp" // exifOrientationOf (the reader the app hands to ThumbWorker)
 #include "io/photo_meta.hpp"   // PhotoMeta, PhotoFlag
 #include "io/sidecar.hpp"      // sidecarFileOf, sidecarFileText, SidecarEdits
 #include "io/virtual_copy.hpp" // vcPath
@@ -195,7 +196,10 @@ TEST_CASE("thumb_worker: makeThumb", "[thumb_worker]")
                         {96, 72, 96, 72},    // already the size
                         {50, 40, 50, 40},    // never enlarged
                         {1, 1, 1, 1},
-                        {4000, 10, 96, 1}};  // never below 1 px
+                        {4000, 10, 96, 1},   // never below 1 px
+                        {10, 4000, 1, 72},   // ...in either direction
+                        {97, 73, 96, 72},    // just over: uneven block sizes, edge blocks stay inside
+                        {150, 100, 96, 64}}; // 1.56:1, blocks of 1 or 2 pixels
   for (const Case &c : cases)
   {
     auto t = makeThumb(makeImage(c.w, c.h));
@@ -597,13 +601,20 @@ TEST_CASE("thumb_worker: exifOrientation", "[thumb_worker][threaded]")
 
 TEST_CASE("thumb_worker: exifOrientationDirection", "[thumb_worker][threaded]")
 { // dimensions alone can't tell a 180 turn from no turn, or 90 from 270, or a mirror from none:
-  // the gradient says which corner ended up top-left (JPEG is lossy, so only high / low is checked)
+  // the gradient says which corner ended up top-left (JPEG is lossy, so only high / low is checked).
+  // The corner alone is ambiguous for the pairs (1,5) (2,8) (3,7) (4,6); whether width and height
+  // swapped (5..8) tells each pair apart, so corner + shape identifies all eight orientations.
   TempDir td;
-  struct Case { int orient; bool redHigh, greenHigh; }; // the top-left pixel once upright
-  const Case cases[] = {{1, false, false},  // upright already: the gradient's own origin
-                        {2, true, false},   // mirrored left-right
-                        {3, true, true},    // turned 180 degrees
-                        {6, false, true}};  // 90 degrees clockwise: the old bottom-left is now top-left
+  struct Case { int orient; bool redHigh, greenHigh, portrait; }; // the top-left pixel once upright
+  const Case cases[] = {{1, false, false, false}, // upright already: the gradient's own origin
+                        {2, true, false, false},  // mirrored left-right: old top-right
+                        {3, true, true, false},   // turned 180 degrees: old bottom-right
+                        {4, false, true, false},  // mirrored top-bottom: old bottom-left
+                        {5, false, false, true},  // transposed: old top-left, width and height swapped
+                        {6, false, true, true},   // 90 clockwise: old bottom-left
+                        {7, true, true, true},    // transversed: old bottom-right
+                        {8, true, false, true}};  // 90 counter-clockwise: old top-right
+  constexpr size_t kCases = sizeof(cases) / sizeof(cases[0]);
   std::vector<std::string> paths;
   for (const Case &c : cases)
   {
@@ -614,12 +625,13 @@ TEST_CASE("thumb_worker: exifOrientationDirection", "[thumb_worker][threaded]")
   ThumbWorker w(orientFromExif);
   w.setNotify([&] { notified.signal(); });
   w.setQueue(paths);
-  CHECK(notified.waitFor(4));
+  CHECK(notified.waitFor(static_cast<int>(kCases)));
   w.shutdown();
   auto got = w.collect();
-  CHECK(got.size() == 4);
-  for (size_t i = 0; i < got.size() && i < 4; ++i)
+  CHECK(got.size() == kCases);
+  for (size_t i = 0; i < got.size() && i < kCases; ++i)
   {
+    INFO("EXIF orientation " << cases[i].orient);
     if (!got[i].thumb)
     {
       CHECK(false);
@@ -629,7 +641,71 @@ TEST_CASE("thumb_worker: exifOrientationDirection", "[thumb_worker][threaded]")
     rg(*got[i].thumb, 0, 0, &r, &g);
     CHECK((r > 128) == cases[i].redHigh);
     CHECK((g > 128) == cases[i].greenHigh);
+    CHECK((got[i].thumb->height > got[i].thumb->width) == cases[i].portrait);
   }
+}
+
+// Same pictures, turned by the editor's own reader (the one Workers hands to
+// ThumbWorker) instead of the helper above: a divergence between the two would
+// otherwise go unnoticed.
+TEST_CASE("thumb_worker: productionExifReader", "[thumb_worker][threaded]")
+{
+  TempDir td;
+  const std::string plain = td.path("p1.jpg"), rot = td.path("p6.jpg"), half = td.path("p3.jpg");
+  CHECK(writeJpeg(plain, 200, 100, 1));
+  CHECK(writeJpeg(rot, 200, 100, 6));
+  CHECK(writeJpeg(half, 200, 100, 3));
+  Latch notified;
+  ThumbWorker w([](const std::string &p) { return exifOrientationOf(p); });
+  w.setNotify([&] { notified.signal(); });
+  w.setQueue({plain, rot, half});
+  CHECK(notified.waitFor(3));
+  w.shutdown();
+  auto got = w.collect();
+  CHECK(got.size() == 3);
+  if (got.size() == 3 && got[0].thumb && got[1].thumb && got[2].thumb)
+  {
+    CHECK((got[0].thumb->width == 96 && got[0].thumb->height == 48));
+    CHECK((got[1].thumb->width == 36 && got[1].thumb->height == 72)); // turned upright
+    CHECK((got[2].thumb->width == 96 && got[2].thumb->height == 48));
+    int r = 0, g = 0;
+    rg(*got[2].thumb, 0, 0, &r, &g); // 180: the old bottom-right is now top-left
+    CHECK((r > 128 && g > 128));
+  }
+  else
+    CHECK(false);
+}
+
+// The orient callback is documented to run on the worker thread, with the
+// picture file's path, and a virtual copy is never decoded, so never asked.
+TEST_CASE("thumb_worker: orientCallback", "[thumb_worker][threaded]")
+{
+  TempDir td;
+  const std::string pic = td.path("c.png"), copy1 = vcPath(pic, 1);
+  CHECK(writePng(pic, 30, 20));
+  std::mutex m;
+  std::vector<std::string> asked;
+  std::vector<std::thread::id> threads;
+  Latch notified;
+  ThumbWorker w([&](const std::string &p) -> Orient
+                {
+                  std::lock_guard lk(m);
+                  asked.push_back(p);
+                  threads.push_back(std::this_thread::get_id());
+                  return Orient{}; });
+  w.setNotify([&] { notified.signal(); });
+  w.setQueue({pic, copy1});
+  CHECK(notified.waitFor(2));
+  w.shutdown();
+  std::lock_guard lk(m);
+  CHECK(asked.size() == 1); // the copy was not decoded, so not asked
+  if (asked.size() == 1)
+  {
+    CHECK(asked[0] == pic);
+    CHECK(threads[0] != std::this_thread::get_id());
+  }
+  auto got = w.collect();
+  CHECK(got.size() == 2);
 }
 
 // ------------------------------------------------------------------- shutdown
@@ -747,5 +823,86 @@ TEST_CASE("thumb_worker: setNotifyWhileRunning", "[thumb_worker][threaded]")
   w.shutdown();
   total += w.collect().size();
   CHECK(total == paths.size());
+}
+
+// collect() must not wait for a notify callback that is still running: the
+// callback is called outside the lock (queueReplacement checks setQueue, this
+// checks collect).
+TEST_CASE("thumb_worker: collectWhileNotifying", "[thumb_worker][threaded]")
+{
+  TempDir td;
+  const std::string a = td.path("a.png"), b = td.path("b.png");
+  CHECK(writePng(a, 30, 20));
+  CHECK(writePng(b, 30, 20));
+  Latch inNotify, notified;
+  Gate release;
+  std::atomic<int> calls{0};
+  std::atomic<bool> timedOut{false};
+  ThumbWorker w(orientFromExif);
+  w.setNotify([&]
+              {
+                if (calls++ == 0)
+                {
+                  inNotify.signal();
+                  if (!release.wait())
+                    timedOut = true;
+                }
+                notified.signal(); });
+  w.setQueue({a, b});
+  CHECK(inNotify.waitFor(1)); // a is parked; the worker is held inside notify
+  auto first = w.collect();   // needs the lock the worker must not be holding
+  CHECK(first.size() == 1);
+  if (first.size() == 1)
+    CHECK(first[0].path == a);
+  release.open();
+  CHECK(notified.waitFor(2)); // b is made and announced after the release
+  w.shutdown();
+  auto rest = w.collect();
+  CHECK(rest.size() == 1);
+  if (rest.size() == 1)
+    CHECK(rest[0].path == b);
+  CHECK(!timedOut);
+}
+
+TEST_CASE("thumb_worker: emptyQueue", "[thumb_worker][threaded]")
+{
+  { // an empty queue on a fresh worker starts a thread with nothing to do
+    ThumbWorker w(orientFromExif);
+    w.setQueue({});
+    w.shutdown();
+    CHECK(w.collect().empty());
+  }
+  { // ...and replaces a long queue: only the file in flight is finished
+    TempDir td;
+    std::vector<std::string> paths;
+    for (int i = 0; i < 20; ++i)
+    {
+      paths.push_back(td.path("e" + std::to_string(i) + ".png"));
+      CHECK(writePng(paths.back(), 64, 48));
+    }
+    Latch inNotify;
+    Gate release;
+    std::atomic<int> calls{0};
+    std::atomic<bool> timedOut{false};
+    ThumbWorker w(orientFromExif);
+    w.setNotify([&]
+                {
+                  if (calls++ == 0)
+                  {
+                    inNotify.signal();
+                    if (!release.wait())
+                      timedOut = true;
+                  } });
+    w.setQueue(paths);
+    CHECK(inNotify.waitFor(1)); // the first is done, 19 are queued
+    w.setQueue({});             // drops all 19
+    release.open();
+    w.shutdown();
+    auto got = w.collect();
+    CHECK(got.size() == 1);
+    if (!got.empty())
+      CHECK(got[0].path == paths[0]);
+    CHECK(!timedOut);
+  }
 }
 } // namespace thumb_worker_cases

@@ -15,7 +15,7 @@
 // picture: the shown one already has the tone sliders applied, so its histogram
 // would change every time Auto Tone ran. Reading `source` makes the answer the
 // same whatever the sliders say, so pressing it twice is a no-op.
-static void autoTone() {
+inline void autoTone() {
   if (state.dragging || !state.source)
     return;
   if (geometryBusy()) {
@@ -58,7 +58,7 @@ static void autoTone() {
 // histogram canvas both call it from their dirty polls, and whichever is
 // polled first (the sidebar, so usually the histogram) does the work — so the
 // histogram never lags a frame behind the picture.
-static void flushPendingAdjust() {
+inline void flushPendingAdjust() {
   collectFullRender();  // a finished background render, if any
   collectGeometryJob(); // a finished background geometry rebuild, if any
   collectDecodeJob();   // a finished background file decode, if any
@@ -83,13 +83,13 @@ static void flushPendingAdjust() {
 
 // Brings the shown image (and, if stale, the histogram) up to date. Several
 // canvases poll this; only the first poll of a frame does any work.
-static void refreshHistogramIfStale();
+inline void refreshHistogramIfStale();
 
 // Rebuilds the R/G/B/luma histograms and the clipping overlay from the image
 // currently on screen (the mid-drag preview, or the full-resolution result).
 // The counting and the overlay are histogram.hpp; this only picks the image
 // and stores the results where the histogram and canvas painters read them.
-static void computeHistogram() {
+inline void computeHistogram() {
   const CanvasImage *img =
       state.showPreview() ? state.previewImage.get() : state.image.get();
   const histogram::Counts c = histogram::compute(img);
@@ -109,7 +109,7 @@ static void computeHistogram() {
 // Luma as gray bars, R/G/B as thin colored outlines on top. Bar heights use
 // sqrt scaling and are normalized to the tallest bin among 1..254, so a pile
 // of clipped pixels in bin 0/255 doesn't flatten the rest of the graph.
-static void paintHistogramBars(CanvasContext &ctx, float W, float H) {
+inline void paintHistogramBars(CanvasContext &ctx, float W, float H) {
   uint32_t peak = 1;
   for (int i = 1; i < 255; ++i)
     peak = std::max(
@@ -150,7 +150,7 @@ static void paintHistogramBars(CanvasContext &ctx, float W, float H) {
 // The two clipping triangles in the top corners of the pinned canvas. They
 // stay in every view (histogram, waveform, vectorscope): clipping is a
 // property of the picture, not of the way it is plotted.
-static void paintClipTriangles(CanvasContext &ctx, float W) {
+inline void paintClipTriangles(CanvasContext &ctx, float W) {
   // Clipping triangles. Dark: nothing clipped. Otherwise colored by which
   // channels clip (white = all three). White outline: that overlay is on.
   auto triangle = [&](bool left, uint8_t mask, bool overlayOn) {
@@ -183,7 +183,7 @@ static void paintClipTriangles(CanvasContext &ctx, float W) {
 // Waveform or vectorscope: the picture scopes::render made, stretched over the
 // canvas (the waveform fills it, the vectorscope is a centered square), plus a
 // faint graticule and the view's name in the bottom-left corner.
-static void paintScope(CanvasContext &ctx, float W, float H) {
+inline void paintScope(CanvasContext &ctx, float W, float H) {
   const bool wave = state.scopeKind == scopes::Kind::Waveform;
   float x0 = 0.0f, y0 = 0.0f, w = W, h = H;
   if (!wave) {
@@ -231,7 +231,7 @@ static void paintScope(CanvasContext &ctx, float W, float H) {
 
 // The pinned canvas: the histogram, or the waveform / vectorscope picked with
 // a click (cycleScope), always with the clipping triangles on top.
-static void paintHistogram(CanvasContext &ctx) {
+inline void paintHistogram(CanvasContext &ctx) {
   const float W = ctx.width(), H = ctx.height();
   uiState.hist.canvasW = W;
   ctx.setFillColor(Color{34, 34, 38, 255});
@@ -243,7 +243,7 @@ static void paintHistogram(CanvasContext &ctx) {
   paintClipTriangles(ctx, W);
 }
 
-static void refreshHistogramIfStale() {
+inline void refreshHistogramIfStale() {
   flushPendingAdjust();
   if (state.histStale)
     computeHistogram();
@@ -252,14 +252,14 @@ static void refreshHistogramIfStale() {
 // Turns the shadow / highlight overlays on or off. Recomputing right away
 // rebuilds the overlay, bumps histVersion (so the histogram repaints its
 // triangles) and the canvas is told to repaint.
-static void setClipping(bool shadows, bool highlights) {
+inline void setClipping(bool shadows, bool highlights) {
   state.clipShadowsOn = shadows;
   state.clipHighlightsOn = highlights;
   computeHistogram();
   state.markDirty();
 }
 // J: both on, or both off if either is currently on.
-static void toggleClipping() {
+inline void toggleClipping() {
   if (!state.image)
     return;
   const bool on = !(state.clipShadowsOn || state.clipHighlightsOn);
@@ -268,7 +268,7 @@ static void toggleClipping() {
 
 // Shift+J: switch between classic red/blue and per-channel colors. If no
 // overlay is on yet, turn both on so the key always shows something.
-static void toggleChannelClipping() {
+inline void toggleChannelClipping() {
   if (!state.image)
     return;
   state.clipPerChannel = !state.clipPerChannel;
@@ -282,11 +282,10 @@ static void toggleChannelClipping() {
 // Waveform -> Vectorscope -> Histogram. computeHistogram() rebuilds the scope
 // picture for the new view and bumps histVersion, so the canvas repaints; its
 // height follows scopeKind (see where the canvas is built).
-static void cycleScope() {
+inline void cycleScope() {
   if (!state.image)
     return;
   state.scopeKind = scopes::nextKind(state.scopeKind);
   computeHistogram();
   state.markDirty();
 }
-

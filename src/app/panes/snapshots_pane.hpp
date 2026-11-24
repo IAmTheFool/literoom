@@ -9,7 +9,7 @@
 // to restore it (one undo step); type a name and Save to keep the current
 // state. They are saved in the picture's edits file, not in the presets
 // folder.
-static View buildSnapshotsPane() {
+inline View buildSnapshotsPane() {
   View snapshotsPane;
   snapshotsPane.style.width = Size::full();
   snapshotsPane.style.direction = FlexDirection::Column;

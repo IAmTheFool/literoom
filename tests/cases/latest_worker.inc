@@ -13,6 +13,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -542,7 +543,7 @@ TEST_CASE("latest_worker: stress", "[latest_worker][threaded]")
   CHECK(jobs >= 1);
   CHECK(n >= delivered + 1); // every delivered value was notified first
   CHECK(n <= jobs);
-  std::printf("stress: %d jobs ran, %d notified, %d collected\n", jobs, n, delivered);
+  INFO("stress: " << jobs << " jobs ran, " << n << " notified, " << delivered << " collected");
 }
 
 TEST_CASE("latest_worker: waitForLatestCancelledBySubmit", "[latest_worker][threaded]")
@@ -679,4 +680,193 @@ TEST_CASE("latest_worker: throwingNotifyAndRestart", "[latest_worker][threaded]"
   CHECK((b && *b == 3));
   w.shutdown();
 }
+
+// ------------------------------------- waiter vs the UI thread's own calls
+// waitForLatest() sleeps on a helper thread while the UI thread keeps polling
+// collect() or calls invalidate(). Whatever the interleaving, the waiter must
+// RETURN (never sleep on a request that can no longer finish), and a result
+// must go to exactly one of the two callers. A stuck waiter is released with
+// shutdown() so a regression fails the test instead of hanging it.
+// (A logic hang, not a data race: this shows up on multi-core machines only
+// some of the time, so the loop runs many rounds.)
+TEST_CASE("latest_worker: waiterVsCollect", "[latest_worker][threaded]")
+{
+  int hung = 0, bothGot = 0, nobodyGot = 0;
+  for (int round = 0; round < 300; ++round)
+  {
+    Gate gate;
+    IntWorker w([&](int &&j, WorkerCancel) -> std::optional<int>
+                { gate.wait(); return j; });
+    w.submit(round);
+    Latch returned;
+    IntWorker::WaitResult r{IntWorker::WaitStatus::failed, std::nullopt, nullptr};
+    std::thread t([&] { r = w.waitForLatest(); returned.signal(); });
+    grace(2ms);   // the waiter is (almost certainly) asleep before the result lands
+    gate.open();
+    std::optional<int> got;
+    const auto end = std::chrono::steady_clock::now() + 2s;
+    while (returned.count() == 0 && std::chrono::steady_clock::now() < end)
+    {
+      if (!got)
+        got = w.collect();
+      std::this_thread::yield();
+    }
+    if (returned.count() == 0)
+    {
+      ++hung;
+      w.shutdown(); // releases the stuck waiter
+    }
+    t.join();
+    const bool waiterGot = r.status == IntWorker::WaitStatus::completed && r.value == round;
+    if (got.has_value() && waiterGot)
+      ++bothGot;
+    if (!got.has_value() && !waiterGot)
+      ++nobodyGot;
+  }
+  INFO("hung=" << hung << " bothGot=" << bothGot << " nobodyGot=" << nobodyGot);
+  CHECK(hung == 0);       // the waiter always came back
+  CHECK(bothGot == 0);    // the value was handed out once
+  CHECK(nobodyGot == 0);  // ...and it was not lost
+}
+
+TEST_CASE("latest_worker: waiterVsInvalidate", "[latest_worker][threaded]")
+{
+  int hung = 0, notCancelled = 0;
+  for (int round = 0; round < 300; ++round)
+  {
+    Latch started, returned;
+    IntWorker w([&](int &&, WorkerCancel c) -> std::optional<int>
+                {
+                  started.signal();
+                  waitCancelled(c);
+                  return std::nullopt; });
+    w.submit(round);
+    started.waitFor(1);
+    IntWorker::WaitResult r{IntWorker::WaitStatus::failed, std::nullopt, nullptr};
+    std::thread t([&] { r = w.waitForLatest(); returned.signal(); });
+    if (round % 2)
+      grace(1ms); // half the rounds: invalidate while the waiter is asleep, half: around its entry
+    w.invalidate();
+    if (!returned.waitFor(1, 2000ms))
+    {
+      ++hung;
+      w.shutdown();
+    }
+    t.join();
+    if (r.status != IntWorker::WaitStatus::cancelled)
+      ++notCancelled;
+  }
+  INFO("hung=" << hung << " notCancelled=" << notCancelled);
+  CHECK(hung == 0);
+  CHECK(notCancelled == 0);
+}
+
+// ----------------------------------------------- setNotify at any time
+TEST_CASE("latest_worker: setNotifyWhileRunning", "[latest_worker][threaded]")
+{ // the callback is replaced while jobs finish on the worker thread (run it under
+  // ThreadSanitizer to check the copy-under-lock rule), and nothing is lost
+  std::atomic<int> a{0}, b{0};
+  IntWorker w([](int &&j, WorkerCancel) -> std::optional<int>
+              { return j; });
+  for (int i = 0; i < 2000; ++i)
+  {
+    if (i % 2)
+      w.setNotify([&] { ++a; });
+    else
+      w.setNotify([&] { ++b; });
+    w.submit(i);
+    if (i % 7 == 0)
+      (void)w.collect();
+  }
+  w.setNotify([&] { ++a; });
+  w.submit(-1);
+  const auto last = w.waitForLatest();
+  CHECK(last.status == IntWorker::WaitStatus::completed);
+  CHECK((last.value && *last.value == -1));
+  w.shutdown(); // joins: every notify that will ever run has run
+  CHECK(a + b >= 1);
+}
+
+TEST_CASE("latest_worker: replacedNotifyDestroyedOutsideLock", "[latest_worker][threaded]")
+{ // setNotify() documents that the OLD callback is destroyed after the lock is
+  // released. The old callback's destructor takes that lock (collect() with a
+  // request outstanding); if setNotify destroyed it under the lock this would
+  // deadlock, so it runs on a helper thread with a timeout.
+  Gate gate;
+  IntWorker w([&](int &&j, WorkerCancel) -> std::optional<int>
+              { gate.wait(); return j; });
+  w.submit(1); // outstanding, so collect() really takes the lock
+  Latch destroyed, replaced;
+  struct Sentinel
+  {
+    IntWorker *w;
+    Latch *done;
+    Sentinel(IntWorker *w_, Latch *d) : w(w_), done(d) {}
+    ~Sentinel()
+    {
+      (void)w->collect();
+      done->signal();
+    }
+  };
+  w.setNotify([s = std::make_shared<Sentinel>(&w, &destroyed)] {});
+  std::thread t([&]
+                {
+                  w.setNotify({}); // destroys the sentinel
+                  replaced.signal(); });
+  if (!replaced.waitFor(1, 3000ms))
+  {
+    std::fputs("latest_worker: setNotify deadlocked destroying the old callback\n", stderr);
+    std::abort(); // the helper is stuck on the lock: nothing can be joined
+  }
+  t.join();
+  gate.open();
+  w.shutdown();
+  CHECK(destroyed.count() == 1);
+}
+
+// ----------------------------------------------------- the Cancel contract
+TEST_CASE("latest_worker: cancelGenerations", "[latest_worker][threaded]")
+{ // routines such as renderWith take (c.latest, c.gen) and compare them directly
+  Log gens;
+  std::atomic<int> consistent{0};
+  IntWorker w([&](int &&, WorkerCancel c) -> std::optional<int>
+              {
+                gens.add(static_cast<int>(c.gen));
+                if (c.latest != nullptr && c.latest->load() == c.gen && !c.cancelled())
+                  ++consistent;
+                return 0; });
+  w.submit(0);
+  CHECK(w.waitForLatest().status == IntWorker::WaitStatus::completed);
+  w.invalidate(); // takes a generation number of its own
+  w.submit(0);
+  CHECK(w.waitForLatest().status == IntWorker::WaitStatus::completed);
+  w.submit(0);
+  CHECK(w.waitForLatest().status == IntWorker::WaitStatus::completed);
+  w.shutdown();
+  const std::vector<int> g = gens.get();
+  CHECK(g.size() == 3);
+  if (g.size() == 3)
+  {
+    CHECK((g[0] < g[1] && g[1] < g[2]));
+    CHECK(g[1] > g[0] + 1); // the invalidate() in between consumed a number
+  }
+  CHECK(consistent == 3);   // while it runs, an unsuperseded job sees latest == gen
+}
+
+// An abandoned (nullopt) job leaves the request outstanding until collect()
+// consumes the abandonment: pinned here so a change to it is a decision.
+TEST_CASE("latest_worker: outstandingAfterNullopt", "[latest_worker][threaded]")
+{
+  Latch finished;
+  IntWorker w([&](int &&, WorkerCancel) -> std::optional<int>
+              { finished.signal(); return std::nullopt; });
+  w.submit(1);
+  CHECK(finished.waitFor(1));
+  grace();
+  CHECK(w.outstanding());           // not superseded, not collected yet
+  CHECK(!w.collect().has_value());  // consumes the abandonment
+  CHECK(!w.outstanding());
+  w.shutdown();
+}
+
 } // namespace latest_worker_cases

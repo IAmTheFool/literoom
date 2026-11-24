@@ -15,15 +15,15 @@
 //   press inside         moves the whole polygon
 // With "Freehand lasso" on, a press starts a new outline and the drag draws it
 // (simplified while you draw). The outline is always closed.
-constexpr float kPolyClampLo = -0.25f; // vertices stay near the picture
-constexpr float kPolyClampHi = 1.25f;
-constexpr float kLassoTolPx = 1.5f; // simplification tolerance, screen px
+inline constexpr float kPolyClampLo = -0.25f; // vertices stay near the picture
+inline constexpr float kPolyClampHi = 1.25f;
+inline constexpr float kLassoTolPx = 1.5f; // simplification tolerance, screen px
 
-static float polyClampCoord(float v) {
+inline float polyClampCoord(float v) {
   return std::clamp(v, kPolyClampLo, kPolyClampHi);
 }
 // The polygon's vertices in document pixels (what the pointer is measured in).
-static std::vector<PolyPt> polyDocPts(const PolygonShape &view) {
+inline std::vector<PolyPt> polyDocPts(const PolygonShape &view) {
   const float W = state.docWidth(), H = state.docHeight();
   std::vector<PolyPt> out;
   out.reserve(view.pts.size());
@@ -32,7 +32,7 @@ static std::vector<PolyPt> polyDocPts(const PolygonShape &view) {
   return out;
 }
 // The vertex under (px, py), the closest one within the grab tolerance, or -1.
-static int polyVertexAt(const std::vector<PolyPt> &dp, float px, float py) {
+inline int polyVertexAt(const std::vector<PolyPt> &dp, float px, float py) {
   const float tol = kMaskHitPx / state.zoom;
   int best = -1;
   float bestD = tol;
@@ -46,12 +46,12 @@ static int polyVertexAt(const std::vector<PolyPt> &dp, float px, float py) {
   return best;
 }
 // What picks an UNSELECTED polygon: a vertex, or inside a closed outline.
-static bool polygonBodyHit(const PolygonShape &view, float px, float py) {
+inline bool polygonBodyHit(const PolygonShape &view, float px, float py) {
   const std::vector<PolyPt> dp = polyDocPts(view);
   return polyVertexAt(dp, px, py) >= 0 || polyContains(dp, px, py);
 }
 
-static void
+inline void
 polygonEditPts(int mask, size_t part, int control,
                const std::function<void(std::vector<PolyPt> &)> &fn) {
   const GeoFrame frame = state.adjust.geoFrame();
@@ -64,13 +64,13 @@ polygonEditPts(int mask, size_t part, int control,
       control);
 }
 
-static void polygonDirty() {
+inline void polygonDirty() {
   enterDrag(false); // recompute on the cheap preview path while held
   state.markAdjustDirty();
   state.markDirty();
 }
 
-static void polygonBegin(float px, float py) {
+inline void polygonBegin(float px, float py) {
   const int i = selMask();
   if (i < 0)
     return;
@@ -154,7 +154,7 @@ static void polygonBegin(float px, float py) {
     insertAt(view->pts.size(), here); // fewer than 3 points: append
 }
 
-static void polygonDragTo(float px, float py, MaskUi::Drag d) {
+inline void polygonDragTo(float px, float py, MaskUi::Drag d) {
   const int i = selMask();
   if (i < 0)
     return;
@@ -219,7 +219,7 @@ static void polygonDragTo(float px, float py, MaskUi::Drag d) {
 }
 
 // Right-click on a vertex of the selected polygon removes it.
-static void polygonRightPress(float lx, float ly) {
+inline void polygonRightPress(float lx, float ly) {
   if (!maskToolActive() || !selectedIsPolygon())
     return;
   const int i = selMask();

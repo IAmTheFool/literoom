@@ -6,7 +6,7 @@
 #pragma once
 
 // -- "Info" pane: real data about the open image.
-static View buildInfoPane() {
+inline View buildInfoPane() {
   View infoPane;
   infoPane.style.direction = FlexDirection::Column;
   infoPane.style.width = Size::full();

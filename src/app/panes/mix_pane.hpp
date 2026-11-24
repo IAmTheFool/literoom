@@ -9,7 +9,7 @@
 // Saturation and Luminance; the tabs pick which of the three sets of eight
 // sliders is shown (a bullet marks a tab that has been changed, so an edit
 // on a tab you've since switched away from isn't forgotten).
-static View buildMixPane() {
+inline View buildMixPane() {
   View mixPane;
   mixPane.style.width = Size::full();
   mixPane.style.direction = FlexDirection::Column;

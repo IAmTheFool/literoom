@@ -10,7 +10,7 @@
 // io/preset.hpp). They live as small files in presetDir(); the list
 // (uiState.presets.list) is a cache of what is there, re-read when the pane is opened and after every save
 // or delete (never per frame).
-static void refreshPresets(const std::string &select = std::string()) {
+inline void refreshPresets(const std::string &select = std::string()) {
   uiState.presets.list.clear();
   uiState.presets.sel = -1;
   const std::string dir = presetDir();
@@ -29,7 +29,7 @@ static void refreshPresets(const std::string &select = std::string()) {
 
 // Replaces the look with preset i: one undo step, "Preset: <name>" in History.
 // Crop, rotation and masks are not touched.
-static void applyPresetEntry(size_t i) {
+inline void applyPresetEntry(size_t i) {
   if (state.dragging || !state.original || i >= uiState.presets.list.size())
     return;
   uiState.presets.sel = static_cast<int>(i);
@@ -45,7 +45,7 @@ static void applyPresetEntry(size_t i) {
 }
 
 // Saves the current look under the name typed in the field.
-static void saveCurrentPreset() {
+inline void saveCurrentPreset() {
   if (!state.original)
     return;
   const std::string name = sanitizePresetName(
@@ -69,7 +69,7 @@ static void saveCurrentPreset() {
   setStatus("Saved preset: " + name, false);
 }
 
-static void deleteSelectedPreset() {
+inline void deleteSelectedPreset() {
   if (uiState.presets.sel < 0 || static_cast<size_t>(uiState.presets.sel) >= uiState.presets.list.size())
     return;
   const PresetEntry e = uiState.presets.list[static_cast<size_t>(uiState.presets.sel)];
@@ -84,7 +84,7 @@ static void deleteSelectedPreset() {
 // Keeps the name field to printable ASCII (the TextInput is ASCII-only) and
 // the preset name cap. Trimming happens on save, so typing spaces between
 // words still works.
-static void filterPresetNameField(const std::string &typed) {
+inline void filterPresetNameField(const std::string &typed) {
   std::string s;
   for (char c : typed)
     if (c >= 0x20 && c <= 0x7E && s.size() < kPresetNameMax)
@@ -99,7 +99,7 @@ static void filterPresetNameField(const std::string &typed) {
 // ---------------- Copy / Paste Settings ----------------
 // Same payload as a preset (the look only), kept in memory instead of a file.
 
-static void copySettings() {
+inline void copySettings() {
   if (!state.original)
     return;
   uiState.clipboard.settings = state.adjust.currentPreset(std::string());
@@ -107,7 +107,7 @@ static void copySettings() {
   setStatus("Copied settings from " + uiState.clipboard.settingsFrom, false);
 }
 
-static void pasteSettings() {
+inline void pasteSettings() {
   if (state.dragging || !state.original)
     return;
   if (!uiState.clipboard.settings) {

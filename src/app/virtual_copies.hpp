@@ -13,7 +13,7 @@
 // (see filmOpenIndex), so switching is instant.
 
 // Puts `e` at index `at` of the strip and keeps every stored index right.
-static void filmInsertEntry(size_t at, FilmEntry e) {
+inline void filmInsertEntry(size_t at, FilmEntry e) {
   FilmStrip &f = state.film;
   f.files.insert(f.files.begin() + static_cast<std::ptrdiff_t>(at),
                  std::move(e));
@@ -28,7 +28,7 @@ static void filmInsertEntry(size_t at, FilmEntry e) {
 
 // Takes entry `at` out of the strip. The open picture's index is forgotten
 // (-1) when it was the one removed; the caller opens something else.
-static void filmRemoveEntry(size_t at) {
+inline void filmRemoveEntry(size_t at) {
   FilmStrip &f = state.film;
   f.files.erase(f.files.begin() + static_cast<std::ptrdiff_t>(at));
   for (int *i : {&f.current, &f.target, &f.anchor}) {
@@ -45,7 +45,7 @@ static void filmRemoveEntry(size_t at) {
 
 // A new virtual copy of the open picture, starting from its current edits
 // (snapshots and the rating are not copied), opened at once.
-static void createVirtualCopy() {
+inline void createVirtualCopy() {
   FilmStrip &f = state.film;
   if (!state.original || state.imagePath.empty() || state.dragging ||
       syncBusy())
@@ -96,7 +96,7 @@ static void createVirtualCopy() {
 
 // Deletes the open virtual copy's edits file (the picture and its other copies
 // are untouched) and goes back to the original. Asks to be chosen twice.
-static void deleteVirtualCopy() {
+inline void deleteVirtualCopy() {
   FilmStrip &f = state.film;
   if (!state.original || state.imagePath.empty() || state.dragging ||
       syncBusy())
@@ -135,7 +135,7 @@ static void deleteVirtualCopy() {
   setStatus("Deleted virtual copy " + std::to_string(n), false);
 }
 
-static void setSelectedObjectMap(std::shared_ptr<const ObjectMap> m) {
+inline void setSelectedObjectMap(std::shared_ptr<const ObjectMap> m) {
   const size_t part = static_cast<size_t>(selPart());
   maskEditDiscrete([&](Mask &mk) {
     if (part < mk.parts.size())
@@ -148,7 +148,7 @@ static void setSelectedObjectMap(std::shared_ptr<const ObjectMap> m) {
 
 // The "Set test map" button's selection (not a segmenter): pixels brighter than
 // the picture's mean.
-static std::shared_ptr<const ObjectMap> makeTestObjectMap() {
+inline std::shared_ptr<const ObjectMap> makeTestObjectMap() {
   if (!state.original)
     return nullptr;
   const CanvasImage &im = *state.original;
@@ -176,13 +176,13 @@ static std::shared_ptr<const ObjectMap> makeTestObjectMap() {
   return m;
 }
 
-static bool selectedIsObject() {
+inline bool selectedIsObject() {
   return selectedPartType() == MaskType::Object;
 }
 
 // The prompts a new click builds on: the ones still being segmented for this
 // part, else the committed ones. Original-picture fractions.
-static std::vector<ObjectPrompt> objectCurrentPrompts(int mask, int part) {
+inline std::vector<ObjectPrompt> objectCurrentPrompts(int mask, int part) {
   const MaskUi::ObjPending &p = state.mask.objPending;
   if (p.mask == mask && p.part == part)
     return p.prompts;
@@ -198,7 +198,7 @@ static std::vector<ObjectPrompt> objectCurrentPrompts(int mask, int part) {
   return {};
 }
 
-static void clearSelectedObject() {
+inline void clearSelectedObject() {
   workers().segment.invalidate();
   state.mask.objPending = {};
   const size_t part = static_cast<size_t>(selPart());
@@ -211,7 +211,7 @@ static void clearSelectedObject() {
   });
 }
 
-static void objectPrefetch() {
+inline void objectPrefetch() {
   if (!state.original || workers().segment.outstanding() ||
       state.mask.encodedKey == state.imageSerial)
     return;
@@ -226,7 +226,7 @@ static void objectPrefetch() {
 // A click on the picture with an object part selected. Left click adds a
 // point (foreground, or background if "Click adds Background" is on);
 // right click adds the opposite kind; clicking an existing dot removes it.
-static void objectPress(float lx, float ly, bool rightClick) {
+inline void objectPress(float lx, float ly, bool rightClick) {
   state.openMenu = -1;
   if (!maskToolActive() || !selectedIsObject() || !state.original)
     return;
@@ -281,7 +281,7 @@ static void objectPress(float lx, float ly, bool rightClick) {
 }
 
 // The starting shape of each kind of mask (nullopt for an unknown kind).
-static std::optional<MaskShape> newMaskShape(MaskType t) {
+inline std::optional<MaskShape> newMaskShape(MaskType t) {
   switch (t) {
   case MaskType::Radial:
     // Centered on the picture as it is shown now.
@@ -306,9 +306,9 @@ static std::optional<MaskShape> newMaskShape(MaskType t) {
   }
 }
 
-static void objectPrefetch();
+inline void objectPrefetch();
 
-static void addMask(MaskType t) {
+inline void addMask(MaskType t) {
   if (!state.original)
     return;
   MaskSet ms = state.adjust.masks();
@@ -332,7 +332,7 @@ static void addMask(MaskType t) {
     objectPrefetch();
 }
 
-static void deleteSelectedMask() {
+inline void deleteSelectedMask() {
   const int i = selMask();
   if (i < 0)
     return;
@@ -345,4 +345,3 @@ static void deleteSelectedMask() {
   updateImageFromAdjustments();
   state.markDirty();
 }
-

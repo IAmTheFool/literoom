@@ -10,9 +10,9 @@
 // state.zoom logical units per pixel, with kViewPad of margin all round. If it
 // fits an axis it is centered there; otherwise that axis scrolls.
 using ViewDrag = decltype(EditorState::view)::Drag;
-constexpr float kViewPad = 24.0f;
-constexpr float kViewBar = kScrollbarThickness;
-constexpr float kViewMinThumb = 24.0f;
+inline constexpr float kViewPad = 24.0f;
+inline constexpr float kViewBar = kScrollbarThickness;
+inline constexpr float kViewMinThumb = 24.0f;
 
 struct ViewGeo {
   float W = 0, H = 0;           // picture size on screen
@@ -24,7 +24,7 @@ struct ViewGeo {
 
 // Geometry of the view; also keeps the scroll offsets inside their range
 // (the picture can change size under us: crop, rotate, a new zoom).
-static ViewGeo viewGeo(bool clampScroll = true) {
+inline ViewGeo viewGeo(bool clampScroll = true) {
   auto &v = state.view;
   ViewGeo g;
   g.W = state.docWidth() * state.zoom;
@@ -46,14 +46,14 @@ static ViewGeo viewGeo(bool clampScroll = true) {
 
 // The picture's top-left corner in canvas coordinates, on a whole device pixel
 // so a 100% picture is drawn pixel-exact at any display scale.
-static void viewOrigin(const ViewGeo &g, float &ox, float &oy) {
+inline void viewOrigin(const ViewGeo &g, float &ox, float &oy) {
   const float d = state.dpr;
   ox = std::round((g.baseX - state.view.scrollX) * d) / d;
   oy = std::round((g.baseY - state.view.scrollY) * d) / d;
 }
 // Canvas coordinates -> picture-local coordinates (what the crop, mask, picker
 // and readout code take: divide by state.zoom to get image pixels).
-static void viewLocal(float x, float y, float &lx, float &ly) {
+inline void viewLocal(float x, float y, float &lx, float &ly) {
   float ox, oy;
   viewOrigin(viewGeo(), ox, oy);
   lx = x - ox;
@@ -62,7 +62,7 @@ static void viewLocal(float x, float y, float &lx, float &ly) {
 
 // Changes the display scale and/or the device-pixel zoom, keeping the image
 // point under canvas position (ax, ay) where it is.
-static void changeView(float newDpr, float newZoomDev, float ax, float ay) {
+inline void changeView(float newDpr, float newZoomDev, float ax, float ay) {
   auto &v = state.view;
   const bool have = state.image && state.zoom > 0.0f;
   float ix = 0, iy = 0; // image-pixel point under the anchor
@@ -81,16 +81,16 @@ static void changeView(float newDpr, float newZoomDev, float ax, float ay) {
   viewGeo(); // clamp
   state.markDirty();
 }
-static void zoomAbout(float zoomDev, float ax, float ay) {
+inline void zoomAbout(float zoomDev, float ax, float ay) {
   changeView(state.dpr, zoomDev, ax, ay);
 }
 // Zooms about the middle of the canvas (menus, buttons, shortcuts).
-static void setZoom(float zoomDev) {
+inline void setZoom(float zoomDev) {
   zoomAbout(zoomDev, state.view.w / 2.0f, state.view.h / 2.0f);
 }
 // The display scale changed (first known at startup, or the window moved to
 // another monitor): keep the same device zoom, so 100% stays 100%.
-static void setDpr(float dpr) {
+inline void setDpr(float dpr) {
   changeView(dpr, state.zoomDev, state.view.w / 2.0f, state.view.h / 2.0f);
 }
 
@@ -98,7 +98,7 @@ static void setDpr(float dpr) {
 struct ViewThumb {
   float pos, len;
 };
-static ViewThumb viewThumb(float track, float content, float scroll,
+inline ViewThumb viewThumb(float track, float content, float scroll,
                            float maxScroll) {
   const float len =
       std::clamp(track * track / std::max(1.0f, content), kViewMinThumb, track);
@@ -108,7 +108,7 @@ static ViewThumb viewThumb(float track, float content, float scroll,
 
 // A press at canvas position (x, y): starts a scrollbar drag, or pages the
 // view when it lands on a track. Returns true if it landed on a bar.
-static bool viewBarPress(float x, float y) {
+inline bool viewBarPress(float x, float y) {
   if (!state.image)
     return false;
   auto &v = state.view;
@@ -143,7 +143,7 @@ static bool viewBarPress(float x, float y) {
   }
   return false;
 }
-static void viewPanBegin(float x, float y) {
+inline void viewPanBegin(float x, float y) {
   auto &v = state.view;
   v.drag = ViewDrag::Pan;
   v.dragX = x;
@@ -151,7 +151,7 @@ static void viewPanBegin(float x, float y) {
   v.dragScrollX = v.scrollX;
   v.dragScrollY = v.scrollY;
 }
-static void viewDragTo(float x, float y) {
+inline void viewDragTo(float x, float y) {
   auto &v = state.view;
   if (!state.image || v.drag == ViewDrag::None)
     return;
@@ -183,7 +183,7 @@ static void viewDragTo(float x, float y) {
   viewGeo(); // clamp
   state.markDirty();
 }
-static void paintViewBars(CanvasContext &ctx, const ViewGeo &g) {
+inline void paintViewBars(CanvasContext &ctx, const ViewGeo &g) {
   auto &v = state.view;
   const float availW = v.w - (g.vbar ? kViewBar : 0.0f);
   const float availH = v.h - (g.hbar ? kViewBar : 0.0f);
@@ -211,15 +211,14 @@ static void paintViewBars(CanvasContext &ctx, const ViewGeo &g) {
   }
 }
 
-static void syncSource(bool force);
+inline void syncSource(bool force);
 
-static void updatePreviewFromAdjustments();
+inline void updatePreviewFromAdjustments();
 
 // Defined after GeometryWorker (needs its type); forward-declared here
 // because updateImageFromAdjustments (right below) is written once, in its
 // natural place, even though it now has to decide between the synchronous
 // pipeline and GeometryWorker before either exists yet in the file.
-static bool geometryDirty();
-static void submitGeometryJob();
-static void announceColorTag();
-
+inline bool geometryDirty();
+inline void submitGeometryJob();
+inline void announceColorTag();

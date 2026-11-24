@@ -6,7 +6,7 @@
 #pragma once
 
 // Titlebar: title, File/View menus, window controls.
-static View buildTitlebar(LiteUI &ui) {
+inline View buildTitlebar(LiteUI &ui) {
   View titlebar;
   titlebar.style.direction = FlexDirection::Row;
   titlebar.style.width = Size::full();

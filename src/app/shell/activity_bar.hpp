@@ -6,7 +6,7 @@
 #pragma once
 
 // ---- Activity bar ----
-static View buildActivityBar(const std::vector<Activity> &activities) {
+inline View buildActivityBar(const std::vector<Activity> &activities) {
   View activityBar;
   activityBar.style.width = Size::pixel(kActivityBarW);
   activityBar.style.height = Size::full();

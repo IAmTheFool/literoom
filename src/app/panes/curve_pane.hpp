@@ -10,7 +10,7 @@
 // point to delete it. The whole gesture (add + drag, or a plain drag) is one
 // undo step; the edited channel's histogram sits behind the curve, and
 // other channels' curves that have been changed stay visible, dimmed.
-static View buildCurvePane() {
+inline View buildCurvePane() {
   View curvePane;
   curvePane.style.width = Size::full();
   curvePane.style.direction = FlexDirection::Column;

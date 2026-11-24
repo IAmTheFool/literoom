@@ -4,13 +4,13 @@
 // Tabs of the Adjust pane.
 enum class AdjustTab : int { Tone, Color, Filters, Detail, Effects, Count };
 
-static constexpr const char *kAdjustTabNames[] = {"Tone", "Color", "Filters",
+inline constexpr const char *kAdjustTabNames[] = {"Tone", "Color", "Filters",
                                                   "Detail", "Effects"};
-static AdjustTab gAdjustTab = AdjustTab::Tone; // remembered while the app runs
+inline AdjustTab gAdjustTab = AdjustTab::Tone; // remembered while the app runs
 
 // Which tab a spec belongs to. Filters are Color-stage entries that start at
 // AdjId::Greyscale, so the caller tells us whether that point was reached.
-static AdjustTab adjustTabFor(const AdjustmentSpec &spec, bool pastGreyscale) {
+inline AdjustTab adjustTabFor(const AdjustmentSpec &spec, bool pastGreyscale) {
   switch (spec.stage) {
   case AdjustmentSpec::Stage::Effects:
     return AdjustTab::Effects;
@@ -23,7 +23,7 @@ static AdjustTab adjustTabFor(const AdjustmentSpec &spec, bool pastGreyscale) {
   }
 }
 
-static View buildAdjustTabBar() {
+inline View buildAdjustTabBar() {
   View bar;
   bar.style.width = Size::full();
   bar.style.direction = FlexDirection::Row;
@@ -61,7 +61,7 @@ static View buildAdjustTabBar() {
 // -- "Adjust" pane: a tab bar, then one slider column per tab. Adding a new
 // adjustment later is still a one-line addition to kAdjustmentSpecs; it lands
 // in the tab that adjustTabFor() picks.
-static View buildAdjustPane() {
+inline View buildAdjustPane() {
   View adjustPane;
   adjustPane.style.width = Size::full();
   adjustPane.style.direction = FlexDirection::Column;

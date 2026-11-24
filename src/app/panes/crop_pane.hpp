@@ -8,7 +8,7 @@
 // -- "Crop" pane: aspect-ratio presets, a live readout, and the
 // Apply/Reset/Remove buttons. The selection itself is drawn and dragged
 // directly on the canvas (paintCropOverlay / cropPress / cropDrag).
-static View buildCropPane() {
+inline View buildCropPane() {
   View cropPane;
   cropPane.style.width = Size::full();
   cropPane.style.direction = FlexDirection::Column;

@@ -10,12 +10,12 @@
 // SELECTED mask through maskEdit, so it is undoable and a drag folds into one
 // step. The ids below are the "control" part of that undo key: they must stay
 // below kMaskCtlStride and differ from the kMaskCtl* ids above.
-constexpr int kMaskCtlAmount = 6;
-constexpr int kMaskCtlMix = 30;   // + chan * kMixBandCount + band   (30..53)
-constexpr int kMaskCtlGrade = 60; // + field * 4 + range             (60..71)
-constexpr int kMaskCtlBlend = 72;
-constexpr int kMaskCtlBalance = 73;
-constexpr int kMaskCtlCurve = 80; // + channel                       (80..83)
+inline constexpr int kMaskCtlAmount = 6;
+inline constexpr int kMaskCtlMix = 30;   // + chan * kMixBandCount + band   (30..53)
+inline constexpr int kMaskCtlGrade = 60; // + field * 4 + range             (60..71)
+inline constexpr int kMaskCtlBlend = 72;
+inline constexpr int kMaskCtlBalance = 73;
+inline constexpr int kMaskCtlCurve = 80; // + channel                       (80..83)
 
 // All control ids of one mask, as inclusive ranges. They must not overlap and
 // must stay in 0..kMaskCtlStride-1, or two different controls would fold into
@@ -64,20 +64,20 @@ static_assert(
       return true;
     }(),
     "mask control ids overlap or exceed kMaskCtlStride (see maskEdit)");
-constexpr float kMaskCurveSizePx = 240.0f;
+inline constexpr float kMaskCurveSizePx = 240.0f;
 
 
-static std::string maskIntText(float v) {
+inline std::string maskIntText(float v) {
   return std::to_string(static_cast<int>(std::lround(v)));
 }
-static std::string maskSignedText(float v) {
+inline std::string maskSignedText(float v) {
   const int i = static_cast<int>(std::lround(v));
   return i > 0 ? "+" + std::to_string(i) : std::to_string(i);
 }
 
 // Amount: how strongly all of this mask's adjustments apply (Lightroom's
 // mask "Amount"). 100 = full, 0 = the mask does nothing.
-static View buildMaskAmountSlider() {
+inline View buildMaskAmountSlider() {
   SliderSpec s;
   s.name = "Amount";
   s.lo = 0.0f;
@@ -97,7 +97,7 @@ static View buildMaskAmountSlider() {
 }
 
 // One Color Mixer slider (a band's Hue / Saturation / Luminance) of the mask.
-static View buildMaskMixSlider(MixChan chan, size_t band) {
+inline View buildMaskMixSlider(MixChan chan, size_t band) {
   SliderSpec s;
   s.name = mixBandName(band);
   s.lo = static_cast<float>(kMixMin);
@@ -123,7 +123,7 @@ static View buildMaskMixSlider(MixChan chan, size_t band) {
 
 // One hue / saturation / luminance slider of one grading range of the mask.
 // fieldIdx (0 hue, 1 sat, 2 lum) only keeps the undo keys apart.
-static View buildMaskGradeSlider(const char *name, int range,
+inline View buildMaskGradeSlider(const char *name, int range,
                                  float GradeWheel::*field, int fieldIdx,
                                  float lo, float hi, bool isSigned) {
   SliderSpec s;
@@ -151,7 +151,7 @@ static View buildMaskGradeSlider(const char *name, int range,
 }
 
 // Blending (0..100) or Balance (-100..100), shared by the mask's ranges.
-static View buildMaskGradeShared(bool balance) {
+inline View buildMaskGradeShared(bool balance) {
   SliderSpec s;
   s.name = balance ? "Balance" : "Blending";
   s.lo = balance ? -100.0f : 0.0f;

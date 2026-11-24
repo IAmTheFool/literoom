@@ -8,7 +8,7 @@
 // ---- Center column: canvas viewport on top, filmstrip underneath ----
 // Keeps the filmstrip under the picture only, so the sidebar keeps its
 // full height.
-static View buildCenterColumn() {
+inline View buildCenterColumn() {
   View centerColumn;
   centerColumn.style.direction = FlexDirection::Column;
   centerColumn.style.height = Size::full();

@@ -15,7 +15,7 @@
 // <n>".
 
 // "Snapshot 1", "Snapshot 2", ...: the first one no snapshot already uses.
-static std::string nextSnapshotName() {
+inline std::string nextSnapshotName() {
   for (size_t n = 1; n <= kMaxSnapshots + 1; ++n) {
     const std::string cand = "Snapshot " + std::to_string(n);
     bool used = false;
@@ -29,7 +29,7 @@ static std::string nextSnapshotName() {
 
 // Keeps the name field to printable ASCII and the name cap (trimming happens
 // on save, so typing spaces between words still works).
-static void filterSnapshotNameField(const std::string &typed) {
+inline void filterSnapshotNameField(const std::string &typed) {
   std::string s;
   for (char c : typed)
     if (c >= 0x20 && c <= 0x7E && s.size() < kSnapshotNameMax)
@@ -43,7 +43,7 @@ static void filterSnapshotNameField(const std::string &typed) {
 
 // Saves the picture's current edits as a snapshot named like the field (or
 // "Snapshot <n>" when it is blank).
-static void addSnapshot() {
+inline void addSnapshot() {
   if (!state.original)
     return;
   if (state.snapshots.size() >= kMaxSnapshots) {
@@ -83,7 +83,7 @@ static void addSnapshot() {
 
 // Puts the picture back as snapshot i describes it: one undo step. Geometry and
 // masks come back too, so the picture is refreshed exactly as after an undo.
-static void applySnapshotEntry(size_t i) {
+inline void applySnapshotEntry(size_t i) {
   if (state.dragging || !state.original || i >= state.snapshots.size())
     return;
   uiState.snapshots.sel = static_cast<int>(i);
@@ -99,7 +99,7 @@ static void applySnapshotEntry(size_t i) {
   setStatus("Restored snapshot: " + s.name, false);
 }
 
-static void deleteSelectedSnapshot() {
+inline void deleteSelectedSnapshot() {
   if (uiState.snapshots.sel < 0 || static_cast<size_t>(uiState.snapshots.sel) >= state.snapshots.size())
     return;
   const std::string name = state.snapshots[static_cast<size_t>(uiState.snapshots.sel)].name;

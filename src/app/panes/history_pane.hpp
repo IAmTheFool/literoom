@@ -6,7 +6,7 @@
 #pragma once
 
 // -- "History" pane: every undo step, newest first. Click to jump.
-static View buildHistoryPane() {
+inline View buildHistoryPane() {
   View historyPane;
   historyPane.style.width = Size::full();
   historyPane.style.direction = FlexDirection::Column;

@@ -5,7 +5,7 @@
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
-static void paintCropOverlay(CanvasContext &ctx) {
+inline void paintCropOverlay(CanvasContext &ctx) {
   const auto &c = state.crop;
   const float W = state.docWidth(), H = state.docHeight();
   const float px = 1.0f / state.zoom; // one screen pixel, in image units
@@ -51,4 +51,3 @@ static void paintCropOverlay(CanvasContext &ctx) {
       ctx.strokeRect(xs[i] - hs / 2.0f, ys[j] - hs / 2.0f, hs, hs);
     }
 }
-

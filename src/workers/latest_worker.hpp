@@ -138,7 +138,8 @@ public:
     if (abandonedGen_ && *abandonedGen_ == latest_.load()) {
       abandonedGen_.reset();
       outstanding_ = false;
-      return std::nullopt;
+      doneCv_.notify_all(); // a waitForLatest() on another thread must not sleep on
+      return std::nullopt;  // a request that has just been consumed
     }
 
     if (done_ && done_->gen != latest_.load())
@@ -153,6 +154,7 @@ public:
 
       done_.reset();
       outstanding_ = false;
+      doneCv_.notify_all();
 
       lk.unlock();
 
@@ -163,6 +165,7 @@ public:
 
     done_.reset();
     outstanding_ = false;
+    doneCv_.notify_all();
 
     return v;
   }
@@ -180,7 +183,10 @@ public:
   //
   // With nothing outstanding (never submitted, invalidated, shut down, or the
   // result already taken) there is nothing to wait for: returns cancelled at
-  // once instead of blocking on a generation that can never finish.
+  // once instead of blocking on a generation that can never finish. The same
+  // holds if that happens WHILE waiting (the UI thread's collect() or
+  // invalidate()): the waiter returns cancelled, and exactly one of the two
+  // callers receives a result.
   WaitResult waitForLatest() {
     if (!outstanding_)
       return {WaitStatus::cancelled, std::nullopt, nullptr};
@@ -188,8 +194,12 @@ public:
 
     const uint64_t target = latest_.load();
 
+    // outstanding_ was checked above WITHOUT the lock, so by now an invalidate(),
+    // shutdown() or a collect() on the UI thread may already have cleared it. The
+    // predicate therefore also watches it: every place that clears it notifies
+    // doneCv_ afterwards, so the waiter can never sleep on a request that is gone.
     doneCv_.wait(lk, [this, target] {
-      return latest_.load() != target ||
+      return !outstanding_.load() || latest_.load() != target ||
              (abandonedGen_ && *abandonedGen_ == target) ||
              (done_ && done_->gen == target);
     });
@@ -204,6 +214,12 @@ public:
       outstanding_ = false;
       abandonedGen_.reset();
 
+      return {WaitStatus::cancelled, std::nullopt, nullptr};
+    }
+
+    // Nothing is parked for this request: it was invalidated, or collect() took
+    // the result first.
+    if (!done_ || done_->gen != target) {
       return {WaitStatus::cancelled, std::nullopt, nullptr};
     }
 

@@ -8,8 +8,8 @@
 // Red/blue clipping warning over the edited picture. The overlay image is
 // in document space (stretched to docW x docH like the preview), so it
 // lines up at any zoom. computeHistogram builds it.
-static void computeHistogram();
-static void paintClipOverlay(CanvasContext &ctx, float docW, float docH) {
+inline void computeHistogram();
+inline void paintClipOverlay(CanvasContext &ctx, float docW, float docH) {
   if (!state.clipShadowsOn && !state.clipHighlightsOn)
     return;
   if (state.histStale)
@@ -30,13 +30,13 @@ struct PictureTex {
                                          // its address cannot be reused)
   std::shared_ptr<CanvasTexture> tex;
 };
-static PictureTex gImageTex, gSourceTex, gPreviewTex;
+inline PictureTex gImageTex, gSourceTex, gPreviewTex;
 
 // The image and the source are built once and replaced, never edited in place
 // (the editor's rule, see architecture.md), so the texture can SHARE their
 // pixels: wrap() costs no extra memory. Null if there is no picture or it can't
 // be wrapped; the caller then falls back to drawImage.
-static const std::shared_ptr<CanvasTexture> &
+inline const std::shared_ptr<CanvasTexture> &
 pictureTexture(PictureTex &slot, const std::shared_ptr<CanvasImage> &img) {
   if (slot.of != img) {
     slot.of = img;
@@ -51,7 +51,7 @@ pictureTexture(PictureTex &slot, const std::shared_ptr<CanvasImage> &img) {
 // each would still create and delete a GPU texture per frame. One texture of
 // the preview's size is kept instead and each new preview is copied into it
 // (a few MB), which uploads as a sub-image into the same GPU texture.
-static const std::shared_ptr<CanvasTexture> &
+inline const std::shared_ptr<CanvasTexture> &
 previewTexture(const std::shared_ptr<CanvasImage> &img) {
   PictureTex &slot = gPreviewTex;
   if (slot.of != img) {
@@ -69,7 +69,7 @@ previewTexture(const std::shared_ptr<CanvasImage> &img) {
   return slot.tex;
 }
 
-static void paintCanvas(CanvasContext &ctx) {
+inline void paintCanvas(CanvasContext &ctx) {
   LITEUI_PROF_START(profAppPaint);
   if (!state.image || state.image->width <= 0 || state.image->height <= 0) {
     gImageTex = PictureTex{}; // no picture: let go of the GPU copies
@@ -171,4 +171,3 @@ static void paintCanvas(CanvasContext &ctx) {
   paintViewBars(ctx, vg);
   LITEUI_PROF_ADD(appPaint, profAppPaint);
 }
-

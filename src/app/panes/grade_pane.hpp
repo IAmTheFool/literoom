@@ -7,7 +7,7 @@
 
 // -- "Color Grade" pane: 3-way / single-range color wheels (Shadows,
 // Midtones, Highlights, Global) plus shared Blending and Balance sliders.
-static View buildGradePane() {
+inline View buildGradePane() {
   View gradePane;
   gradePane.style.width = Size::full();
   gradePane.style.direction = FlexDirection::Column;

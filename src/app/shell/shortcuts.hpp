@@ -10,7 +10,7 @@
 // after clicking a sidebar button too. Modifiers must match exactly.
 // Zoom uses the unshifted Ctrl+= / Ctrl+-: on Linux LiteUI reports shifted
 // symbols like '+' as Key::Unknown, so Ctrl+Shift+= can't be bound there.
-static void installShortcuts(LiteUI &ui) {
+inline void installShortcuts(LiteUI &ui) {
   auto withMods = [](bool ctrl, bool shift) {
     KeyModifiers m;
     m.ctrl = ctrl;

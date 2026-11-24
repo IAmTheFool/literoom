@@ -9,7 +9,7 @@
 
 // What a mask is called in the list: its first part's kind, then the next
 // one, then how many more ("Radial + Brush +1").
-static std::string maskLabel(const Mask &m) {
+inline std::string maskLabel(const Mask &m) {
   if (m.parts.empty())
     return "Empty";
   if (!maskNameBlank(m.name))
@@ -25,7 +25,7 @@ static std::string maskLabel(const Mask &m) {
 // One row of the mask list: "1  Radial", highlighted when selected. There are
 // kMaxMasks of these, shown only for the masks that exist (the view tree is
 // built once, so the list is a fixed set of slots).
-static View buildMaskRow(size_t i) {
+inline View buildMaskRow(size_t i) {
   View b;
   b.style.width = Size::full();
   b.style.height = Size::pixel(28);
@@ -71,7 +71,7 @@ static View buildMaskRow(size_t i) {
 }
 
 // One row of the Presets list. Click applies the preset (undoable).
-static View buildPresetRow(size_t i) {
+inline View buildPresetRow(size_t i) {
   View b;
   b.style.width = Size::full();
   b.style.height = Size::pixel(28);
@@ -109,7 +109,7 @@ static View buildPresetRow(size_t i) {
 // One row of the LUTs list: the open picture under that LUT, the LUT's name and
 // a line about the file. Click applies it (undoable). With no picture open a
 // row is just the name.
-static View buildLutRow(size_t i) {
+inline View buildLutRow(size_t i) {
   const auto withPicture = [] { return state.original != nullptr; };
   const auto isCur = [i] {
     const LutRef &r = state.adjust.lut();
@@ -203,7 +203,7 @@ static View buildLutRow(size_t i) {
 }
 
 // One row of the Snapshots list. Click restores the snapshot (undoable).
-static View buildSnapshotRow(size_t i) {
+inline View buildSnapshotRow(size_t i) {
   View b;
   b.style.width = Size::full();
   b.style.height = Size::pixel(28);

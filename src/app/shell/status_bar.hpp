@@ -6,7 +6,7 @@
 #pragma once
 
 // Status bar: image info on the left, zoom controls on the right.
-static View buildStatusBar() {
+inline View buildStatusBar() {
   View statusBar;
   statusBar.style.width = Size::full();
   statusBar.style.height = Size::pixel(kStatusBarH);

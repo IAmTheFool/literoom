@@ -8,7 +8,7 @@
 // ---- Right-hand panel: the selected mask's controls ----
 // Only on the Masks pane with a mask selected, so every other pane keeps
 // the full canvas width. Drag its divider to resize.
-static void addMaskPanel(View &workspace, View maskEditor) {
+inline void addMaskPanel(View &workspace, View maskEditor) {
   const auto maskPanelShown = [] { return maskToolActive() && selMask() >= 0; };
 
   View rDivider;

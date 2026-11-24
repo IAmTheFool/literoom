@@ -8,7 +8,7 @@
 // ---- Sidebar (width driven by activeActivity: 0 when closed) ----
 // Shell: owns width/background/padding and holds the pinned header
 // (title + histogram). It does NOT scroll.
-static View buildSidebar(const std::vector<Activity> &activities, View &maskEditor) { 
+inline View buildSidebar(const std::vector<Activity> &activities, View &maskEditor) { 
   View sidebarShell;
   sidebarShell.style.height = Size::full();
   sidebarShell.style.flexShrink = 0;

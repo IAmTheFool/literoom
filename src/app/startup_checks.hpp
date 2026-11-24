@@ -11,7 +11,7 @@
 // which aren't usable in constant expressions. So it's checked once at
 // startup instead, and a mistake aborts with a message naming the bad entry
 // rather than silently moving the wrong slider.
-static void verifyAdjustmentSpecs() {
+inline void verifyAdjustmentSpecs() {
   for (size_t i = 0; i < kAdjustmentSpecs.size(); ++i) {
     const AdjustmentSpec &s = kAdjustmentSpecs[i];
     const char *problem = nullptr;

@@ -9,7 +9,7 @@
 
 // One Color Mixer slider (a band's Hue, Saturation or Luminance), tinted in
 // the band's own color. Same undo/preview behavior as every Adjust slider.
-static View buildMixSlider(MixChan chan, size_t band) {
+inline View buildMixSlider(MixChan chan, size_t band) {
   SliderSpec s;
   s.name = mixBandName(band);
   s.lo = static_cast<float>(kMixMin);
@@ -25,32 +25,32 @@ static View buildMixSlider(MixChan chan, size_t band) {
 }
 
 // Zeroes all 24 mixer sliders (one undo step).
-static void resetColorMix() {
+inline void resetColorMix() {
   state.adjust.resetMix();
   state.markAdjustDirty();
 }
 
 // ---------------- Color Grading UI ----------------
-constexpr float kGradePaneW =
+inline constexpr float kGradePaneW =
     250.0f; // sidebar width the wheels are laid out for
-constexpr float kGradePi = 3.14159265358979f;
-constexpr int kGradeMainWheel = 130;   // Midtones wheel in 3-way mode
-constexpr int kGradeSmallWheel = 84;   // Shadows / Highlights in 3-way mode
-constexpr int kGradeSingleWheel = 170; // wheel in the single-range modes
-constexpr float kGradeTabW = 40.0f;
+inline constexpr float kGradePi = 3.14159265358979f;
+inline constexpr int kGradeMainWheel = 130;   // Midtones wheel in 3-way mode
+inline constexpr int kGradeSmallWheel = 84;   // Shadows / Highlights in 3-way mode
+inline constexpr int kGradeSingleWheel = 170; // wheel in the single-range modes
+inline constexpr float kGradeTabW = 40.0f;
 
 
-static const char *gradeRangeName(int r) {
+inline const char *gradeRangeName(int r) {
   static const char *const n[kGradeRangeCount] = {"Shadows", "Midtones",
                                                   "Highlights", "Global"};
   return n[r];
 }
 
 // Wheel brightness is cosmetic (Lightroom dims the shadow wheel).
-constexpr float kGradeWheelBrightness[kGradeRangeCount] = {0.62f, 1.0f, 0.80f,
+inline constexpr float kGradeWheelBrightness[kGradeRangeCount] = {0.62f, 1.0f, 0.80f,
                                                            1.0f};
 
-static Color gradeHsv(float h, float s, float v, uint8_t a = 255) {
+inline Color gradeHsv(float h, float s, float v, uint8_t a = 255) {
   float c[3];
   gradeHueToRgb(h, c);
   auto to8 = [&](float f) {
@@ -60,8 +60,8 @@ static Color gradeHsv(float h, float s, float v, uint8_t a = 255) {
   return Color{to8(c[0]), to8(c[1]), to8(c[2]), a};
 }
 
-static size_t gradeHash(float v) { return std::hash<float>{}(v); }
-static size_t gradeMix(size_t a, size_t b) {
+inline size_t gradeHash(float v) { return std::hash<float>{}(v); }
+inline size_t gradeMix(size_t a, size_t b) {
   return a ^ (b + 0x9e3779b97f4a7c15ULL + (a << 6) + (a >> 2));
 }
 
@@ -69,7 +69,7 @@ static size_t gradeMix(size_t a, size_t b) {
 // angle = hue (0 at 3 o'clock, counter-clockwise), radius = saturation,
 // white in the centre. Cached in a map so the CanvasImage address stays
 // stable (liteui caches the converted surface per image).
-static const CanvasImage &gradeWheelImage(int d, float brightness) {
+inline const CanvasImage &gradeWheelImage(int d, float brightness) {
   static std::map<std::pair<int, int>, CanvasImage> cache;
   const auto key =
       std::make_pair(d, static_cast<int>(std::lround(brightness * 100)));
@@ -100,14 +100,14 @@ static const CanvasImage &gradeWheelImage(int d, float brightness) {
 
 // Applies `fn` to a copy of the current grade and commits it (key: see
 // AdjustmentSet::setGrade).
-static void gradeEdit(const std::function<void(ColorGrade &)> &fn, int key) {
+inline void gradeEdit(const std::function<void(ColorGrade &)> &fn, int key) {
   ColorGrade g = state.adjust.grade();
   fn(g);
   state.adjust.setGrade(g, key);
 }
 
 // Leaves the low-res drag preview and asks for one full-resolution render.
-static void gradeEndDrag() {
+inline void gradeEndDrag() {
   state.adjust.endGradeEdit();
   if (state.dragging) {
     state.dragging = false;
@@ -117,7 +117,7 @@ static void gradeEndDrag() {
 }
 
 // A slider bound to one field (hue / sat / lum) of one wheel.
-static View buildGradeWheelSlider(const std::string &name, int range,
+inline View buildGradeWheelSlider(const std::string &name, int range,
                                   float GradeWheel::*field, float lo, float hi,
                                   int keyBase, float trackW, bool isSigned) {
   SliderSpec s;
@@ -141,7 +141,7 @@ static View buildGradeWheelSlider(const std::string &name, int range,
 
 // One hue/saturation wheel: click or drag sets hue (angle) + saturation
 // (radius); right-click resets both.
-static View buildGradeWheel(int range, int diameter, float pad) {
+inline View buildGradeWheel(int range, int diameter, float pad) {
   const float size = static_cast<float>(diameter) + 2.0f * pad;
   View c;
   c.isCanvas = true;
@@ -261,7 +261,7 @@ static View buildGradeWheel(int range, int diameter, float pad) {
 }
 
 // Eye icon: toggles that wheel's preview (one undo step).
-static View buildGradeEye(int range) {
+inline View buildGradeEye(int range) {
   View c;
   c.isCanvas = true;
   c.style.width = Size::pixel(22);
@@ -311,7 +311,7 @@ static View buildGradeEye(int range) {
 }
 
 // wheel + eye row + luminance slider, as one column
-static View buildGradeWheelBlock(int range, int diameter, float pad) {
+inline View buildGradeWheelBlock(int range, int diameter, float pad) {
   const float size = static_cast<float>(diameter) + 2.0f * pad;
   View col;
   col.style.direction = FlexDirection::Column;
@@ -332,7 +332,7 @@ static View buildGradeWheelBlock(int range, int diameter, float pad) {
 }
 
 // 3-way mode: big Midtones wheel on top, Shadows + Highlights below.
-static View buildGradeThreeWay() {
+inline View buildGradeThreeWay() {
   View col;
   col.style.direction = FlexDirection::Column;
   col.style.alignItems = Align::Center;
@@ -363,7 +363,7 @@ static View buildGradeThreeWay() {
 }
 
 // Single-range mode: one large wheel + Hue / Saturation / Luminance sliders.
-static View buildGradeSingle(int range) {
+inline View buildGradeSingle(int range) {
   View col;
   col.style.direction = FlexDirection::Column;
   col.style.alignItems = Align::Center;
@@ -379,7 +379,7 @@ static View buildGradeSingle(int range) {
 }
 
 // Resets every wheel, Blending and Balance (one undo step).
-static void resetColorGrade() {
+inline void resetColorGrade() {
   state.adjust.setGrade(ColorGrade{}, -1);
   state.markAdjustDirty();
 }

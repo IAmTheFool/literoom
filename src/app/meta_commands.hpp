@@ -18,7 +18,7 @@
 // picture is never in that batch, so it can't race with autosave. "Choose the
 // value it already has to clear it" is decided from the open picture, and the
 // result (set or clear) is then applied to every selected picture alike.
-static void setPhotoMeta(const PhotoMeta &in, const std::string &message) {
+inline void setPhotoMeta(const PhotoMeta &in, const std::string &message) {
   const PhotoMeta m = photoMetaSanitized(in);
   if (m == state.meta)
     return;
@@ -37,7 +37,7 @@ static void setPhotoMeta(const PhotoMeta &in, const std::string &message) {
 }
 
 // The selected pictures other than the open one that the strip shows.
-static std::vector<std::string> metaBatchTargets() {
+inline std::vector<std::string> metaBatchTargets() {
   const FilmStrip &f = state.film;
   std::vector<std::string> paths;
   for (size_t i = 0; i < f.files.size(); ++i)
@@ -47,7 +47,7 @@ static std::vector<std::string> metaBatchTargets() {
   return paths;
 }
 
-static void applyMetaPatch(const MetaPatch &patch, const std::string &message) {
+inline void applyMetaPatch(const MetaPatch &patch, const std::string &message) {
   if (!state.original || state.imagePath.empty()) {
     setStatus("Open a picture first", true);
     return;
@@ -69,7 +69,7 @@ static void applyMetaPatch(const MetaPatch &patch, const std::string &message) {
             false);
 }
 
-static void ratePhoto(int n) {
+inline void ratePhoto(int n) {
   n = std::clamp(n, 0, kMaxRating);
   const int v = n == state.meta.rating ? 0 : n;
   MetaPatch p;
@@ -79,7 +79,7 @@ static void ratePhoto(int n) {
 }
 
 // Pick or Reject toggles; PhotoFlag::None clears.
-static void flagPhoto(PhotoFlag flag) {
+inline void flagPhoto(PhotoFlag flag) {
   const PhotoFlag v = flag == state.meta.flag ? PhotoFlag::None : flag;
   MetaPatch p;
   p.flag = v;
@@ -89,7 +89,7 @@ static void flagPhoto(PhotoFlag flag) {
 }
 
 // 1..kLabelCount toggles that color; 0 clears.
-static void labelPhoto(int c) {
+inline void labelPhoto(int c) {
   c = std::clamp(c, 0, kLabelCount);
   const int v = c == state.meta.label ? 0 : c;
   MetaPatch p;
@@ -149,12 +149,12 @@ inline void adoptDecoded(DecodeWorker::Result &&r) {
 }
 
 // Non-blocking; polled once per frame from flushPendingAdjust.
-static void collectDecodeJob() {
+inline void collectDecodeJob() {
   if (auto r = workers().decode.collect())
     adoptDecoded(std::move(*r));
 }
 
-static void openImage() {
+inline void openImage() {
   if (syncBusy())
     return;
   auto paths = openFilesPicker(
@@ -192,7 +192,7 @@ static void openImage() {
 // The format follows the file name the user picks (.jpg / .jpeg / .png); the
 // Export pane's format choice only decides what the dialog offers first.
 
-static void exportImage() {
+inline void exportImage() {
   if (!state.image)
     return;            // nothing open to export
   finishGeometryJob(); // never export the stale (pre-rebuild) picture
@@ -312,8 +312,7 @@ static void exportImage() {
               true);
 }
 
-static void toggleSidebar() {
+inline void toggleSidebar() {
   state.activeActivity = (state.activeActivity == kNoActivity) ? kInfoActivity : kNoActivity;
   state.markDirty(); // the crop overlay shows only while the Crop pane is open
 }
-

@@ -9,19 +9,19 @@
 // Same behavior as the Curve pane (click = add point, drag = move,
 // right-click = delete) but on the selected mask's own curves, and a bit
 // larger (kMaskCurveSizePx).
-static float mcPlotPx() { return kMaskCurveSizePx - 2.0f * kCurvePadPx; }
-static CurvePoint mcFromLocal(float lx, float ly) {
+inline float mcPlotPx() { return kMaskCurveSizePx - 2.0f * kCurvePadPx; }
+inline CurvePoint mcFromLocal(float lx, float ly) {
   const float plot = mcPlotPx();
   return {
       std::clamp((lx - kCurvePadPx) / plot * 255.0f, 0.0f, 255.0f),
       std::clamp(255.0f - (ly - kCurvePadPx) / plot * 255.0f, 0.0f, 255.0f)};
 }
-static void mcToLocal(float x, float y, float &lx, float &ly) {
+inline void mcToLocal(float x, float y, float &lx, float &ly) {
   const float plot = mcPlotPx();
   lx = kCurvePadPx + x / 255.0f * plot;
   ly = kCurvePadPx + (255.0f - y) / 255.0f * plot;
 }
-static int mcHit(const CurvePoints &pts, float lx, float ly) {
+inline int mcHit(const CurvePoints &pts, float lx, float ly) {
   int hit = -1;
   float best = kCurveHitPx * kCurveHitPx;
   for (size_t i = 0; i < pts.size(); ++i) {
@@ -37,19 +37,19 @@ static int mcHit(const CurvePoints &pts, float lx, float ly) {
 }
 
 // The curve being edited, copied (empty list if no mask is selected).
-static CurvePoints maskCurveCopy() {
+inline CurvePoints maskCurveCopy() {
   const Mask *m = selectedMask();
   return m ? m->curves[static_cast<size_t>(uiState.maskPane.curveCh)] : CurvePoints{};
 }
 // coalesce = true folds a drag into one undo step; false = its own step.
-static void maskCurveCommit(const CurvePoints &pts, bool coalesce) {
+inline void maskCurveCommit(const CurvePoints &pts, bool coalesce) {
   const CurveChannel ch = uiState.maskPane.curveCh;
   maskEdit(
       selMask(), [&](Mask &m) { m.curves[static_cast<size_t>(ch)] = pts; },
       coalesce ? kMaskCtlCurve + static_cast<int>(ch) : -1);
 }
 
-static void maskCurvePress(float lx, float ly) {
+inline void maskCurvePress(float lx, float ly) {
   if (!state.original || !selectedMask())
     return;
   CurvePoints pts = maskCurveCopy();
@@ -73,7 +73,7 @@ static void maskCurvePress(float lx, float ly) {
   uiState.maskPane.curveUiDirty = true;
 }
 
-static void maskCurveDrag(float lx, float ly) {
+inline void maskCurveDrag(float lx, float ly) {
   if (uiState.maskPane.curveActive < 0 || !state.original || !selectedMask())
     return;
   CurvePoints pts = maskCurveCopy();
@@ -90,7 +90,7 @@ static void maskCurveDrag(float lx, float ly) {
   state.markAdjustDirty();
 }
 
-static void maskCurveEnd() {
+inline void maskCurveEnd() {
   uiState.maskPane.curveActive = -1;
   uiState.maskPane.curveUiDirty = true;
   state.adjust.endMaskEdit();
@@ -101,7 +101,7 @@ static void maskCurveEnd() {
   }
 }
 
-static void maskCurveRightPress(float lx, float ly) {
+inline void maskCurveRightPress(float lx, float ly) {
   if (!state.original || !selectedMask())
     return;
   CurvePoints pts = maskCurveCopy();
@@ -111,7 +111,7 @@ static void maskCurveRightPress(float lx, float ly) {
   }
 }
 
-static void paintMaskCurve(CanvasContext &ctx) {
+inline void paintMaskCurve(CanvasContext &ctx) {
   const float W = ctx.width(), H = ctx.height();
   const float pad = kCurvePadPx, plot = mcPlotPx();
   ctx.setFillColor(Color{34, 34, 38, 255});
@@ -175,7 +175,7 @@ static void paintMaskCurve(CanvasContext &ctx) {
   }
 }
 
-static View buildMaskCurveCanvas() {
+inline View buildMaskCurveCanvas() {
   View c;
   c.isCanvas = true;
   c.style.width = Size::pixel(kMaskCurveSizePx);

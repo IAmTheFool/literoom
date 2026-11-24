@@ -8,7 +8,7 @@
 // -- "Presets" pane: saved looks. Click one to apply it (one undo step);
 // type a name and Save to store the current look. The list is re-read from
 // disk each time the pane is opened.
-static View buildPresetsPane() {
+inline View buildPresetsPane() {
   View presetsPane;
   presetsPane.style.width = Size::full();
   presetsPane.style.direction = FlexDirection::Column;

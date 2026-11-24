@@ -133,4 +133,4 @@ struct UiState {
     vcDeleteArmed.clear();
   }
 };
-static UiState uiState;
+inline UiState uiState;

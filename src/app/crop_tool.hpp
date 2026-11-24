@@ -7,7 +7,7 @@
 
 // Which part of the selection is under (px, py) (image coordinates)?
 // Returns kEdge* bits for a handle, kEdgeMove for the interior, 0 for none.
-static int cropHitTest(float px, float py) {
+inline int cropHitTest(float px, float py) {
   const auto &c = state.crop;
   const float tol = kCropHitPx / state.zoom;
   const bool inX = px >= c.l - tol && px <= c.r + tol;
@@ -35,7 +35,7 @@ static int cropHitTest(float px, float py) {
 // Sets the selection to the rectangle spanned by a fixed corner (ax, ay)
 // and the pointer, honoring the aspect lock and the image bounds. Used for
 // both "drag out a new selection" and "drag a corner handle".
-static void cropDragCorner(float ax, float ay, float px, float py) {
+inline void cropDragCorner(float ax, float ay, float px, float py) {
   auto &c = state.crop;
   const float W = state.docWidth(), H = state.docHeight();
   const float a = cropAspect();
@@ -64,7 +64,7 @@ static void cropDragCorner(float ax, float ay, float px, float py) {
 }
 
 // Drags one edge or corner of the existing selection to the pointer.
-static void cropResize(int mask, float px, float py) {
+inline void cropResize(int mask, float px, float py) {
   auto &c = state.crop;
   const float W = state.docWidth(), H = state.docHeight();
   const float minSz = std::min({kCropMinPx, W, H});
@@ -125,7 +125,7 @@ static void cropResize(int mask, float px, float py) {
 
 // Canvas mouse handlers. (lx, ly) are canvas-local screen px; dividing by
 // the zoom gives image pixels.
-static void cropPress(float lx, float ly) {
+inline void cropPress(float lx, float ly) {
   state.openMenu = -1; // the canvas now swallows presses that used to fall
                        // through to the workspace's "close menu" handler
   if (!cropToolActive())
@@ -150,7 +150,7 @@ static void cropPress(float lx, float ly) {
   }
 }
 
-static void cropDrag(float lx, float ly) {
+inline void cropDrag(float lx, float ly) {
   auto &c = state.crop;
   if (!cropToolActive() || c.drag == CropUi::Drag::None)
     return;
@@ -179,7 +179,7 @@ static void cropDrag(float lx, float ly) {
 }
 
 // Commits the current selection as the crop (one undo step).
-static void applyCrop() {
+inline void applyCrop() {
   if (!state.source || geometryBusy())
     return;
   const auto &c = state.crop;
@@ -201,10 +201,9 @@ static void applyCrop() {
 }
 
 // Drops the committed crop, restoring the full original (one undo step).
-static void removeCrop() {
+inline void removeCrop() {
   if (geometryBusy() || state.adjust.crop().empty())
     return;
   state.adjust.setCrop(CropRect{});
   updateImageFromAdjustments();
 }
-

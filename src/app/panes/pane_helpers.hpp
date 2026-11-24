@@ -7,7 +7,7 @@
 
 // A small muted heading above a group of controls (Adjust sections, mask
 // shape sections).
-static Text sectionLabel(const char *text) {
+inline Text sectionLabel(const char *text) {
   Text h;
   h.label = std::string(text);
   h.fontSize = 12.0f;

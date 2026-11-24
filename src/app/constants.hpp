@@ -6,142 +6,142 @@
 #pragma once
 
 // ---------------- Layout constants ----------------
-constexpr float kTitlebarH = 36.0f;
-constexpr float kStatusBarH = 26.0f;
-constexpr float kActivityBarW = 48.0f;
-constexpr float kDividerW = 4.0f;
-constexpr float kMinSidebarW = 180.0f;
-constexpr float kMaxSidebarW = 420.0f;
+inline constexpr float kTitlebarH = 36.0f;
+inline constexpr float kStatusBarH = 26.0f;
+inline constexpr float kActivityBarW = 48.0f;
+inline constexpr float kDividerW = 4.0f;
+inline constexpr float kMinSidebarW = 180.0f;
+inline constexpr float kMaxSidebarW = 420.0f;
 
 // Right-hand panel of the Masks pane (the selected mask's controls).
-constexpr float kMinMaskPanelW = 300.0f;
-constexpr float kMaxMaskPanelW = 480.0f;
-constexpr float kMaskPanelPad = 12.0f; // panel padding, each side
-constexpr float kMaskTrackW = 240.0f;  // slider track length in that panel
+inline constexpr float kMinMaskPanelW = 300.0f;
+inline constexpr float kMaxMaskPanelW = 480.0f;
+inline constexpr float kMaskPanelPad = 12.0f; // panel padding, each side
+inline constexpr float kMaskTrackW = 240.0f;  // slider track length in that panel
                                        // (kMinMaskPanelW - 2 * pad - scrollbar
                                        // must stay >= this)
 
 // Zoom range/step. Zoom is measured in DEVICE pixels (see
 // EditorState::zoomDev): 1.0 = one image pixel per physical screen pixel, on
 // any display scale.
-constexpr float kZoomMin = 0.1f;
-constexpr float kZoomMax = 8.0f;
-constexpr float kZoomStep = 1.25f;
+inline constexpr float kZoomMin = 0.1f;
+inline constexpr float kZoomMax = 8.0f;
+inline constexpr float kZoomStep = 1.25f;
 
 // Crop tool. Sizes marked "screen px" are constant on screen regardless of
 // zoom (the overlay divides by state.zoom when drawing/hit-testing).
-constexpr float kCropMinPx = 16.0f;   // smallest selection edge, image px
-constexpr float kCropHandlePx = 8.0f; // drawn handle size, screen px
-constexpr float kCropHitPx = 10.0f;   // handle grab tolerance, screen px
+inline constexpr float kCropMinPx = 16.0f;   // smallest selection edge, image px
+inline constexpr float kCropHandlePx = 8.0f; // drawn handle size, screen px
+inline constexpr float kCropHitPx = 10.0f;   // handle grab tolerance, screen px
 
 // Color Mixer tab width (the engine constants live in color_mix.hpp).
-constexpr float kMixTabW = 46.0f; // Hue/Sat/Lum tab width (3 + gaps = 150)
+inline constexpr float kMixTabW = 46.0f; // Hue/Sat/Lum tab width (3 + gaps = 150)
 
 // Histogram canvas height (the counting constants live in histogram.hpp).
-constexpr float kHistHeightPx = 80.0f;
+inline constexpr float kHistHeightPx = 80.0f;
 // The same canvas is taller while it shows a waveform or a vectorscope (the
 // vectorscope is a square, so it needs the room). See scopes.hpp.
-constexpr float kScopeHeightPx = 120.0f;
+inline constexpr float kScopeHeightPx = 120.0f;
 
 // Clipping warnings: corner triangles on the histogram (the canvas overlay's
 // constants live in histogram.hpp too).
-constexpr float kHistTriPx = 9.0f;     // triangle leg length
-constexpr float kHistTriHitPx = 18.0f; // click zone in each top corner
+inline constexpr float kHistTriPx = 9.0f;     // triangle leg length
+inline constexpr float kHistTriHitPx = 18.0f; // click zone in each top corner
 
 // Tone curve editor (canvas is square, kCurveSizePx on a side; the plot area
 // is inset by kCurvePadPx so the end points aren't clipped).
-constexpr float kCurveSizePx = 180.0f;
-constexpr float kCurvePadPx = 8.0f;
-constexpr float kCurveHitPx = 10.0f;  // point grab tolerance, screen px
-constexpr float kCurvePointPx = 8.0f; // drawn point size, screen px
-constexpr float kCurveTabW =
+inline constexpr float kCurveSizePx = 180.0f;
+inline constexpr float kCurvePadPx = 8.0f;
+inline constexpr float kCurveHitPx = 10.0f;  // point grab tolerance, screen px
+inline constexpr float kCurvePointPx = 8.0f; // drawn point size, screen px
+inline constexpr float kCurveTabW =
     42.0f; // channel tab width (4 tabs + gaps = canvas width)
 
 // Document size before any image has been opened, so there's a visible
 // page to scroll/zoom around from the start.
-constexpr float kPlaceholderW = 800.0f;
-constexpr float kPlaceholderH = 600.0f;
+inline constexpr float kPlaceholderW = 800.0f;
+inline constexpr float kPlaceholderH = 600.0f;
 
-constexpr size_t kPresetRows = 24;
+inline constexpr size_t kPresetRows = 24;
 
-constexpr size_t kLutRows = kLutMaxFiles; 
-constexpr float kLutRowH =
+inline constexpr size_t kLutRows = kLutMaxFiles; 
+inline constexpr float kLutRowH =
     kFilmThumbH + 12.0f; // a row with its preview of the picture
-constexpr float kLutRowNamesH =
+inline constexpr float kLutRowNamesH =
     28.0f; // a row with no picture open: just the name
 
 // Masks, UI side: tint-bitmap sizes and overlay handle sizes. The engine
 // constants live next to their algorithms: mask_geom.hpp (radii),
 // mask_brush.hpp, mask_range.hpp, mask_object.hpp, seg_basic.hpp and mask.hpp
 // (list limits).
-constexpr int kCompTintEdge = 512;    // long side of a combined mask's tint
-constexpr float kMaskHandlePx = 9.0f; // overlay handle size, screen px
-constexpr float kMaskHitPx = 12.0f;   // overlay handle grab tolerance, px
-constexpr int kBrushTintEdge = 512;   // long side of the brush tint bitmap
-constexpr int kLumTintEdge = 512;     // long side of the on-canvas tint bitmap
+inline constexpr int kCompTintEdge = 512;    // long side of a combined mask's tint
+inline constexpr float kMaskHandlePx = 9.0f; // overlay handle size, screen px
+inline constexpr float kMaskHitPx = 12.0f;   // overlay handle grab tolerance, px
+inline constexpr int kBrushTintEdge = 512;   // long side of the brush tint bitmap
+inline constexpr int kLumTintEdge = 512;     // long side of the on-canvas tint bitmap
 
 // ---------------- Palette (dark, Lightroom-like) ----------------
 // Base swatches.
-constexpr Color kPanelBg{68, 68, 68};
-constexpr Color kHeaderBg{40, 40, 40};
-constexpr Color kTitle{176, 176, 176};
-constexpr Color kLabel{160, 160, 160};
-constexpr Color kValue{232, 232, 232};
-constexpr Color kDivider{46, 46, 46};
-constexpr Color kTrackFill{32, 32, 32};
-constexpr Color kTrackEdge{104, 104, 104};
-constexpr Color kThumbFill{196, 196, 196};
-constexpr Color kThumbEdge{28, 28, 28};
-constexpr Color kIconRing{205, 205, 205};
-constexpr Color kIconActiveBg{92, 92, 92};
-constexpr Color kTransparent{0, 0, 0, 0};
+inline constexpr Color kPanelBg{68, 68, 68};
+inline constexpr Color kHeaderBg{40, 40, 40};
+inline constexpr Color kTitle{176, 176, 176};
+inline constexpr Color kLabel{160, 160, 160};
+inline constexpr Color kValue{232, 232, 232};
+inline constexpr Color kDivider{46, 46, 46};
+inline constexpr Color kTrackFill{32, 32, 32};
+inline constexpr Color kTrackEdge{104, 104, 104};
+inline constexpr Color kThumbFill{196, 196, 196};
+inline constexpr Color kThumbEdge{28, 28, 28};
+inline constexpr Color kIconRing{205, 205, 205};
+inline constexpr Color kIconActiveBg{92, 92, 92};
+inline constexpr Color kTransparent{0, 0, 0, 0};
 
 // Semantic names used throughout the UI, mapped onto the swatches above.
-constexpr Color kColorTransparent = kTransparent;
-constexpr Color kColorWhite{255, 255, 255, 255}; // real white (image, glyphs)
+inline constexpr Color kColorTransparent = kTransparent;
+inline constexpr Color kColorWhite{255, 255, 255, 255}; // real white (image, glyphs)
 
 // Chrome backgrounds.
-constexpr Color kColorRootBg = kHeaderBg;
-constexpr Color kColorPanelBg = kPanelBg;         // sidebar
-constexpr Color kColorTitlebarBg = kHeaderBg;     // titlebar
-constexpr Color kColorActivityBarBg = kHeaderBg;  // activity bar, idle buttons
-constexpr Color kColorMenuHover{62, 62, 62, 255}; // menu / win-btn hover
-constexpr Color kColorActivityHover{84, 84, 84, 255}; // button / tab hover
-constexpr Color kColorActivityActive = kIconActiveBg; // selected activity btn
-constexpr Color kColorDivider = kDivider;             // divider bg
-constexpr Color kColorTrack = kTrackFill;             // slider + scroll track
-constexpr Color kColorScrollThumb = kTrackEdge;
+inline constexpr Color kColorRootBg = kHeaderBg;
+inline constexpr Color kColorPanelBg = kPanelBg;         // sidebar
+inline constexpr Color kColorTitlebarBg = kHeaderBg;     // titlebar
+inline constexpr Color kColorActivityBarBg = kHeaderBg;  // activity bar, idle buttons
+inline constexpr Color kColorMenuHover{62, 62, 62, 255}; // menu / win-btn hover
+inline constexpr Color kColorActivityHover{84, 84, 84, 255}; // button / tab hover
+inline constexpr Color kColorActivityActive = kIconActiveBg; // selected activity btn
+inline constexpr Color kColorDivider = kDivider;             // divider bg
+inline constexpr Color kColorTrack = kTrackFill;             // slider + scroll track
+inline constexpr Color kColorScrollThumb = kTrackEdge;
 
 // Text.
-constexpr Color kColorTextDark = kValue;    // titles, menu labels
-constexpr Color kColorTextMid = kTitle;     // info pane, win-btn glyphs
-constexpr Color kColorTextIcon = kIconRing; // activity bar icons
-constexpr Color kColorTextMuted = kLabel;   // section titles
-constexpr Color kColorTextFaint{120, 120, 120, 255}; // placeholders
+inline constexpr Color kColorTextDark = kValue;    // titles, menu labels
+inline constexpr Color kColorTextMid = kTitle;     // info pane, win-btn glyphs
+inline constexpr Color kColorTextIcon = kIconRing; // activity bar icons
+inline constexpr Color kColorTextMuted = kLabel;   // section titles
+inline constexpr Color kColorTextFaint{120, 120, 120, 255}; // placeholders
 
 // Dropdown menu.
-constexpr Color kColorDropdownBg = kHeaderBg;
-constexpr Color kColorDropdownBorder = kThumbEdge;
-constexpr Color kColorDropdownRowHover = kIconActiveBg; // also "selected"
+inline constexpr Color kColorDropdownBg = kHeaderBg;
+inline constexpr Color kColorDropdownBorder = kThumbEdge;
+inline constexpr Color kColorDropdownRowHover = kIconActiveBg; // also "selected"
 
 // Window controls / accents.
-constexpr Color kColorCloseHover{232, 17, 35, 255};
-constexpr Color kColorDividerHover{100, 140, 220, 255}; // accent (drag, fills)
-constexpr Color kColorAccent{0, 122, 204, 255};         // primary button
-constexpr Color kColorAccentHover{30, 140, 220, 255};
+inline constexpr Color kColorCloseHover{232, 17, 35, 255};
+inline constexpr Color kColorDividerHover{100, 140, 220, 255}; // accent (drag, fills)
+inline constexpr Color kColorAccent{0, 122, 204, 255};         // primary button
+inline constexpr Color kColorAccentHover{30, 140, 220, 255};
 
 // Canvas / viewport.
-constexpr Color kColorCanvasPlaceholderBg{52, 52, 52, 255};
-constexpr Color kColorViewportBg{30, 30, 30, 255};
-constexpr Color kColorCanvasBorder = kTrackEdge;
-constexpr Color kColorEmptyCorner{50, 50, 50, 255}; // behind transparent
+inline constexpr Color kColorCanvasPlaceholderBg{52, 52, 52, 255};
+inline constexpr Color kColorViewportBg{30, 30, 30, 255};
+inline constexpr Color kColorCanvasBorder = kTrackEdge;
+inline constexpr Color kColorEmptyCorner{50, 50, 50, 255}; // behind transparent
                                                     // corners of a
                                                     // straightened image
 
 // Status bar.
-constexpr Color kColorStatusBarBg = kHeaderBg;
-constexpr Color kColorStatusHover = kPanelBg;
-constexpr Color kColorStatusError{255, 214, 102, 255};
+inline constexpr Color kColorStatusBarBg = kHeaderBg;
+inline constexpr Color kColorStatusHover = kPanelBg;
+inline constexpr Color kColorStatusError{255, 214, 102, 255};
 
 // A sidebar tab in the activity bar.
 struct Activity {
@@ -152,7 +152,7 @@ struct Activity {
 
 // Display color of each Color Mixer band (UI only; the math is in
 // color_mix.hpp).
-static Color mixBandColor(size_t band) {
+inline Color mixBandColor(size_t band) {
   static const Color colors[kMixBandCount] = {
       {230, 60, 60, 255},  {240, 140, 50, 255}, {225, 195, 40, 255},
       {70, 180, 80, 255},  {50, 185, 190, 255}, {60, 110, 230, 255},

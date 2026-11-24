@@ -7,7 +7,7 @@
 
 // -- "Rotate" pane: 90-degree turns, mirrors, and a reset. Lossless (pure
 // pixel moves) and each button press is one undo step.
-static View buildRotatePane() {
+inline View buildRotatePane() {
   View rotatePane;
   rotatePane.style.width = Size::full();
   rotatePane.style.direction = FlexDirection::Column;

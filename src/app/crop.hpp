@@ -7,12 +7,12 @@
 
 // ---------------- Crop ----------------
 
-static bool cropToolActive() {
+inline bool cropToolActive() {
   return state.activeActivity == kCropActivity && state.image != nullptr;
 }
 
 // Width/height ratio the selection is locked to, or 0 for free-form.
-static float cropAspect() {
+inline float cropAspect() {
   const float ratio = kCropAspects[state.crop.aspectIdx].ratio;
   if (ratio >= 0.0f)
     return ratio;
@@ -24,7 +24,7 @@ static float cropAspect() {
 
 // Shrinks the selection (about its center) to the locked aspect ratio, so
 // it always stays inside where it already was.
-static void cropFitToAspect() {
+inline void cropFitToAspect() {
   const float a = cropAspect();
   if (a <= 0.0f)
     return;
@@ -44,7 +44,7 @@ static void cropFitToAspect() {
 }
 
 // Selection = the whole image being cropped (then fitted to the aspect lock).
-static void resetCropSelection() {
+inline void resetCropSelection() {
   auto &c = state.crop;
   c.l = 0.0f;
   c.t = 0.0f;
@@ -54,7 +54,7 @@ static void resetCropSelection() {
   cropFitToAspect();
 }
 
-static void setCropAspect(size_t idx) {
+inline void setCropAspect(size_t idx) {
   state.crop.aspectIdx = idx;
   cropFitToAspect();
   state.markDirty();
@@ -66,7 +66,7 @@ static void setCropAspect(size_t idx) {
 // rotate/flip/straighten, an undo/redo across any of them, or (force) when a
 // new image is opened. Also re-seeds the selection, since the image the
 // selection is measured against just changed size.
-static void syncSource(bool force) {
+inline void syncSource(bool force) {
   if (!state.original)
     return;
   const CropRect crop = state.adjust.crop();
@@ -106,4 +106,3 @@ static void syncSource(bool force) {
   state.previewImage.reset();
   resetCropSelection();
 }
-

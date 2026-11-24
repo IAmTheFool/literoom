@@ -8,7 +8,7 @@
 // ---------------- RGB readout under the cursor ----------------
 // Both return true only when the readout changed, so LiteUI repaints only
 // then (see View::onPointerMove: a change marks the canvas dirty).
-static bool hoverClear() {
+inline bool hoverClear() {
   const bool was = state.hoverValid;
   state.hoverValid = false;
   return was;
@@ -16,7 +16,7 @@ static bool hoverClear() {
 
 // Samples the picture the canvas is showing: the original in Before (or the
 // left half of Split), else the edited image / mid-drag preview.
-static bool hoverSample(float lx, float ly) {
+inline bool hoverSample(float lx, float ly) {
   if (state.dragging)
     return false; // a drag is running: leave the readout alone
   const float docW = state.docWidth(), docH = state.docHeight();

@@ -6,7 +6,7 @@
 #pragma once
 
 // ---- Vertical divider — drag to resize the sidebar ----
-static View buildSidebarDivider() {
+inline View buildSidebarDivider() {
   View vDivider;
   vDivider.style.height = Size::full();
   vDivider.style.flexShrink = 0;

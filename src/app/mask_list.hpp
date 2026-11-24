@@ -7,7 +7,7 @@
 
 // ---- Mask list operations: duplicate, reorder, copy / paste effects ----
 // A copy of the selected mask (shapes and effects) right after it, selected.
-static void duplicateSelectedMask() {
+inline void duplicateSelectedMask() {
   const int i = selMask();
   if (i < 0)
     return;
@@ -29,7 +29,7 @@ static void duplicateSelectedMask() {
 
 // Masks apply in list order (later ones on top, and a luminosity range sees
 // the result of the masks before it), so order matters. dir = -1 up, +1 down.
-static void moveSelectedMask(int dir) {
+inline void moveSelectedMask(int dir) {
   const int i = selMask();
   const int j = i + dir;
   MaskSet ms = state.adjust.masks();
@@ -42,7 +42,7 @@ static void moveSelectedMask(int dir) {
   state.markDirty();
 }
 
-static void copyMaskEffects() {
+inline void copyMaskEffects() {
   const Mask *m = selectedMask();
   if (!m)
     return;
@@ -51,7 +51,7 @@ static void copyMaskEffects() {
   setStatus("Mask effects copied", false);
 }
 
-static void pasteMaskEffects() {
+inline void pasteMaskEffects() {
   if (!uiState.clipboard.maskEffects) {
     setStatus("Copy a mask's effects first", true);
     return;
@@ -70,7 +70,7 @@ static void pasteMaskEffects() {
 // Adds a part of kind `t` (joined with Add; change it with setPartOp) and
 // selects it. The combined result is what matters from here on, so the tint
 // is switched on.
-static void addPart(MaskType t) {
+inline void addPart(MaskType t) {
   const int i = selMask();
   if (i < 0)
     return;
@@ -96,7 +96,7 @@ static void addPart(MaskType t) {
 }
 
 // How the selected part joins the ones before it (the first part has none).
-static void setPartOp(MaskOp op) {
+inline void setPartOp(MaskOp op) {
   const size_t j = static_cast<size_t>(selPart());
   if (j == 0)
     return;
@@ -106,7 +106,7 @@ static void setPartOp(MaskOp op) {
   });
 }
 
-static void removeSelectedPart() {
+inline void removeSelectedPart() {
   const Mask *sm = selectedMask();
   if (!sm || sm->parts.size() <= 1)
     return;
@@ -121,7 +121,7 @@ static void removeSelectedPart() {
 
 // A drag on the canvas or a mask slider ended: leave the low-res preview and
 // ask for one full-resolution render (same job as gradeEndDrag).
-static void maskEndDrag() {
+inline void maskEndDrag() {
   state.mask.drag = MaskUi::Drag::None;
   state.adjust.endMaskEdit();
   if (state.dragging) {

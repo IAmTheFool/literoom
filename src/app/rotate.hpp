@@ -9,7 +9,7 @@
 
 // One undo step. `state.rotated` is what crops are measured against, so its
 // size is the (W, H) geoStep needs.
-static void applyGeoOp(GeoOp op) {
+inline void applyGeoOp(GeoOp op) {
   if (!state.original || !state.rotated || geometryBusy())
     return;
   Orient o = state.adjust.orient();
@@ -24,7 +24,7 @@ static void applyGeoOp(GeoOp op) {
 // Undoes every 90-degree turn and flip in one step (the crop follows,
 // staying on the same part of the picture; the straighten angle is kept,
 // still tilting the picture the same way relative to its own edges).
-static void resetOrientation() {
+inline void resetOrientation() {
   if (!state.original || !state.rotated || geometryBusy() ||
       state.adjust.orient().identity())
     return;
@@ -44,23 +44,23 @@ static void resetOrientation() {
 
 // Slider drag: one undo step per drag. Only records the value — the
 // resample is deferred to canvasDirtySource (see there), once per frame.
-static void setAngleFromSlider(float deg) {
+inline void setAngleFromSlider(float deg) {
   state.adjust.setAngle(snapAngle(deg), /*coalesce=*/true);
 }
 
 // A discrete change (nudge button / reset): its own undo step, resampled at
 // full resolution on the next frame.
-static void setAngleDiscrete(float deg) {
+inline void setAngleDiscrete(float deg) {
   if (!state.original)
     return;
   state.adjust.setAngle(snapAngle(deg), /*coalesce=*/false);
   state.markAdjustDirty();
 }
-static void nudgeAngle(float delta) {
+inline void nudgeAngle(float delta) {
   setAngleDiscrete(state.adjust.angle() + delta);
 }
 
-static void setCornerMode(bool expand) {
+inline void setCornerMode(bool expand) {
   if (!state.original)
     return;
   state.adjust.setExpand(expand);
@@ -71,7 +71,7 @@ static void setCornerMode(bool expand) {
 // `orientedPreview` instead of the full-resolution picture, drawn stretched
 // to the size the full-resolution result will have (previewDoc*). The
 // full-resolution turn runs once, when the drag ends (pointer up / cancel).
-static void updateAnglePreview() {
+inline void updateAnglePreview() {
   if (!state.orientedPreview || !state.oriented)
     return;
   const float a = state.adjust.angle();
@@ -86,7 +86,7 @@ static void updateAnglePreview() {
   state.markDirty();
 }
 
-static void undo() {
+inline void undo() {
   if (!state.adjust.canUndo())
     return;
   state.adjust.undo();
@@ -94,7 +94,7 @@ static void undo() {
   updateImageFromAdjustments();
 }
 
-static void redo() {
+inline void redo() {
   if (!state.adjust.canRedo())
     return;
   state.adjust.redo();

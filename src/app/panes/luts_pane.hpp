@@ -10,7 +10,7 @@
 // its strength. Import copies files into the library folder. Each row
 // previews the open picture under that LUT (made on a background worker; see
 // pollLutPreviews). The list is re-read each time the pane is opened.
-static View buildLutsPane() {
+inline View buildLutsPane() {
   View lutsPane;
   lutsPane.style.width = Size::full();
   lutsPane.style.direction = FlexDirection::Column;

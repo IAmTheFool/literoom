@@ -13,7 +13,7 @@
 
 // A brush mask has no body to grab; its "pin" (where its first stroke began)
 // is what an unselected brush is picked by.
-static bool brushPinHit(const BrushShape &b, float px, float py) {
+inline bool brushPinHit(const BrushShape &b, float px, float py) {
   if (b.strokes.empty() || b.strokes.front().pts.empty())
     return false;
   const BrushPt &p = b.strokes.front().pts.front();
@@ -22,7 +22,7 @@ static bool brushPinHit(const BrushShape &b, float px, float py) {
                     py - p.y * state.docHeight()) <= tol;
 }
 
-static void brushBegin(float px, float py) {
+inline void brushBegin(float px, float py) {
   const int i = selMask();
   if (i < 0)
     return;
@@ -67,7 +67,7 @@ static void brushBegin(float px, float py) {
   state.markDirty();
 }
 
-static void brushDragTo(float px, float py) {
+inline void brushDragTo(float px, float py) {
   const int i = selMask();
   if (i < 0)
     return;
@@ -105,12 +105,12 @@ static void brushDragTo(float px, float py) {
   state.markDirty(); // the cursor ring follows the pointer
 }
 
-static std::shared_ptr<CanvasImage>
+inline std::shared_ptr<CanvasImage>
 lumTintBase(); // defined with the luminosity overlay below
 
 // Color of the picture at (fx, fy) (fractions of the picture on screen) as
 // it stands just BEFORE mask `sel`: the same pixels ColorRangeEval sees.
-static std::optional<std::array<float, 3>> samplePreMaskColor(int sel, float fx,
+inline std::optional<std::array<float, 3>> samplePreMaskColor(int sel, float fx,
                                                               float fy) {
   const MaskSet &ms = state.adjust.masks();
   const auto base = lumTintBase();
@@ -143,7 +143,7 @@ static std::optional<std::array<float, 3>> samplePreMaskColor(int sel, float fx,
                               sum[2] / (255.0f * n)};
 }
 
-static void colorRangePress(float px, float py) {
+inline void colorRangePress(float px, float py) {
   const float W = state.docWidth(), H = state.docHeight();
   if (W <= 0 || H <= 0)
     return;
@@ -162,7 +162,7 @@ static void colorRangePress(float px, float py) {
   });
 }
 
-static void maskPress(float lx, float ly) {
+inline void maskPress(float lx, float ly) {
   if (!maskToolActive())
     return;
   state.mask.drag = MaskUi::Drag::None;
@@ -291,7 +291,7 @@ static void maskPress(float lx, float ly) {
   }
 }
 
-static void maskDrag(float lx, float ly) {
+inline void maskDrag(float lx, float ly) {
   if (!maskToolActive() || state.mask.drag == MaskUi::Drag::None)
     return;
   const int i = selMask();
@@ -376,7 +376,7 @@ static void maskDrag(float lx, float ly) {
 }
 
 // Red tint showing the mask's weight (1 = solid, 0 = clear) over the picture.
-static void paintRadialTint(CanvasContext &ctx, const RadialShape &r,
+inline void paintRadialTint(CanvasContext &ctx, const RadialShape &r,
                             bool invert) {
   const MaskGeom g = radialGeom(r);
   const float W = state.docWidth(), H = state.docHeight();
@@ -402,7 +402,7 @@ static void paintRadialTint(CanvasContext &ctx, const RadialShape &r,
 
 // Outline of one radial mask; the selected one also gets its feather ring
 // and handles.
-static void paintRadialOutline(CanvasContext &ctx, const RadialShape &r,
+inline void paintRadialOutline(CanvasContext &ctx, const RadialShape &r,
                                bool selected) {
   const MaskGeom g = radialGeom(r);
   const float px = 1.0f / state.zoom; // one screen pixel, in image units
@@ -457,7 +457,7 @@ static void paintRadialOutline(CanvasContext &ctx, const RadialShape &r,
 
 // Outline of one rectangle mask; the selected one also gets its feather
 // rectangle, handles (middle of each side) and a ring at the center.
-static void paintRectOutline(CanvasContext &ctx, const RectShape &r,
+inline void paintRectOutline(CanvasContext &ctx, const RectShape &r,
                              bool selected) {
   const MaskGeom g = rectGeom(r);
   const float px = 1.0f / state.zoom; // one screen pixel, in image units
@@ -521,7 +521,7 @@ static void paintRectOutline(CanvasContext &ctx, const RectShape &r,
 // Outline of one polygon mask. The outline is closed once it has three
 // points; the selected one also shows a square handle on every vertex (the
 // first one filled, so the start of a lasso is easy to see).
-static void paintPolygonOutline(CanvasContext &ctx, const PolygonShape &view,
+inline void paintPolygonOutline(CanvasContext &ctx, const PolygonShape &view,
                                 bool selected) {
   if (view.pts.empty())
     return;
@@ -560,7 +560,7 @@ static void paintPolygonOutline(CanvasContext &ctx, const PolygonShape &view,
 // Red tint of a linear mask: a gradient along the axis from the weight-1 line
 // to the weight-0 line, with stops sampled from the same smoothstep the
 // renderer uses (the gradient itself is piecewise linear).
-static void paintLinearTint(CanvasContext &ctx, const LinearShape &l,
+inline void paintLinearTint(CanvasContext &ctx, const LinearShape &l,
                             bool invert) {
   const LinGeom g = linearGeom(l);
   const float W = state.docWidth(), H = state.docHeight();
@@ -584,7 +584,7 @@ static void paintLinearTint(CanvasContext &ctx, const LinearShape &l,
 
 // Outline of one linear mask: the two lines of the ramp; the selected one
 // also gets the center line, the axis with an arrowhead, and its handles.
-static void paintLinearOutline(CanvasContext &ctx, const LinearShape &l,
+inline void paintLinearOutline(CanvasContext &ctx, const LinearShape &l,
                                bool selected) {
   const LinGeom g = linearGeom(l);
   const float px = 1.0f / state.zoom; // one screen pixel, in image units

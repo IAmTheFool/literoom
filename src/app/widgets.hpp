@@ -17,13 +17,13 @@
 
 // Closes the open titlebar dropdown. Presses that stopPropagation() never reach
 // the workspace's own "close the menu" handler, so they call this themselves.
-static void closeMenus() { state.openMenu = -1; }
+inline void closeMenus() { state.openMenu = -1; }
 
 // A press on this view belongs to it alone. Used on titlebar widgets: without
 // it the press would bubble to the titlebar's onPointerDown, which closes menus
 // and calls requestMove() (a window drag that swallows the release, so the
 // click never arrives).
-static void swallowPress(View &v) {
+inline void swallowPress(View &v) {
   v.onPointerDown = [](PointerEvent &e) { e.stopPropagation(); };
 }
 
@@ -38,17 +38,17 @@ struct TextFieldKeys {
   std::shared_ptr<TextInputState> state;
   std::function<void(KeyEvent)> onKeyDown;
 };
-static std::vector<TextFieldKeys> gTextFields;
+inline std::vector<TextFieldKeys> gTextFields;
 
 // Call right after `parent.addChild(std::move(textInput))`, with that input's
 // state and the view it flattened into (parent.children.back()).
-static void registerTextField(const std::shared_ptr<TextInputState> &st,
+inline void registerTextField(const std::shared_ptr<TextInputState> &st,
                               const View &flattened) {
   gTextFields.push_back({st, flattened.onKeyDown});
 }
 
 // True if a registered field has focus and took the key.
-static bool forwardKeyToTextField(const KeyEvent &e) {
+inline bool forwardKeyToTextField(const KeyEvent &e) {
   for (const TextFieldKeys &f : gTextFields)
     if (f.state && f.state->focused && f.onKeyDown) {
       f.onKeyDown(e);
@@ -68,7 +68,7 @@ static bool forwardKeyToTextField(const KeyEvent &e) {
 // on the same view, and only the first drives the drag; the others are ignored
 // until it ends. For the mouse the owner is always pointer 1, so nothing
 // changes.
-static void bindDrag(View &v, std::function<void(float, float)> press,
+inline void bindDrag(View &v, std::function<void(float, float)> press,
                      std::function<void(float, float)> drag,
                      std::function<void()> end,
                      std::function<void(float, float)> rightPress = nullptr,
@@ -115,7 +115,7 @@ static void bindDrag(View &v, std::function<void(float, float)> press,
 // Every view with an onClick shows the hand cursor (Style::cursor is inherited,
 // so its label does too), unless it already chose a cursor of its own. Run once
 // on the finished tree.
-static void applyClickCursors(View &v) {
+inline void applyClickCursors(View &v) {
   const auto *c = std::get_if<Cursor>(&v.style.cursor);
   if (v.onClick && c && *c == Cursor::Inherit)
     v.style.cursor = Cursor::Pointer;
@@ -135,7 +135,7 @@ struct MenuItem {
 // MenuItems below it when clicked. Only one menu is open at a time
 // (EditorState::openMenu); picking an item runs its action and closes the
 // menu.
-static View menuButton(const std::string &label, int id,
+inline View menuButton(const std::string &label, int id,
                        std::vector<MenuItem> items) {
   View btn;
   btn.style.height = Size::full();
@@ -206,7 +206,7 @@ static View menuButton(const std::string &label, int id,
 }
 
 // One of the three window-control buttons (minimize/maximize/close).
-static View winButton(const std::string &glyph, Color hoverBg,
+inline View winButton(const std::string &glyph, Color hoverBg,
                       std::function<void()> onClick) {
   View v;
   v.style.width = Size::pixel(46);
@@ -229,7 +229,7 @@ static View winButton(const std::string &glyph, Color hoverBg,
 // optional: pass it to dim the glyph when the action isn't currently
 // available — the click itself is always safe to wire up as a no-op in
 // that case (undo()/redo() already check before doing anything).
-static View titlebarIconBtn(const std::string &glyph,
+inline View titlebarIconBtn(const std::string &glyph,
                             std::function<void()> onClick,
                             std::function<bool()> enabled = {}) {
   View v;
@@ -256,7 +256,7 @@ static View titlebarIconBtn(const std::string &glyph,
 // A full-width sidebar button. `selected` (optional) draws it highlighted —
 // used for the aspect-ratio presets, which behave like radio buttons.
 // `primary` gives it the accent fill for the pane's main action.
-static View sidebarButton(const std::string &label,
+inline View sidebarButton(const std::string &label,
                           std::function<void()> onClick,
                           std::function<bool()> selected = {},
                           bool primary = false,
@@ -307,9 +307,9 @@ static View sidebarButton(const std::string &label,
 // buildAdjustmentSlider) and the Straighten angle slider.
 // Export's "Resize" slider: the long side, in px, in steps of
 // kExportLongEdgeStep.
-constexpr int kExportLongEdgeMin = 128;
-constexpr int kExportLongEdgeMax = 8192;
-constexpr int kExportLongEdgeStep = 16;
+inline constexpr int kExportLongEdgeMin = 128;
+inline constexpr int kExportLongEdgeMax = 8192;
+inline constexpr int kExportLongEdgeStep = 16;
 
 struct SliderSpec {
   std::string name;
@@ -332,7 +332,7 @@ struct SliderSpec {
 // than binding a raw float& the way a standalone slider widget would —
 // that's what lets AdjustmentSet coalesce a whole drag into one undo step
 // instead of one per frame.
-static View buildSliderRow(const SliderSpec &spec) {
+inline View buildSliderRow(const SliderSpec &spec) {
   const float kTrackW = spec.trackW;
   constexpr float kTrackH = 4.0f;
   constexpr float kThumb = 16.0f;
@@ -450,7 +450,7 @@ static View buildSliderRow(const SliderSpec &spec) {
 
 // One Adjust-pane slider for one AdjustmentSpec: adding a new adjustment to
 // kAdjustmentSpecs needs no new UI code at all.
-static View buildAdjustmentSlider(const AdjustmentSpec &spec) {
+inline View buildAdjustmentSlider(const AdjustmentSpec &spec) {
   const AdjId id = spec.id;
   SliderSpec s;
   s.name = spec.label;
@@ -463,4 +463,3 @@ static View buildAdjustmentSlider(const AdjustmentSpec &spec) {
   };
   return buildSliderRow(s);
 }
-

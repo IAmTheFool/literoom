@@ -7,7 +7,7 @@
 
 // -- "Export" pane: format, JPEG quality, metadata, and the Export button.
 // (The File menu's Export... and Ctrl+E use these same settings.)
-static View buildExportPane() {
+inline View buildExportPane() {
   View exportPane;
   exportPane.style.width = Size::full();
   exportPane.style.direction = FlexDirection::Column;

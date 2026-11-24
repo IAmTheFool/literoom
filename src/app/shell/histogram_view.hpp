@@ -8,7 +8,7 @@
 // Histogram of the picture as currently shown (see computeHistogram).
 // Pinned above every pane, like Lightroom. A click cycles it through the
 // histogram, a waveform and a vectorscope (cycleScope).
-static View buildHistogramView() {
+inline View buildHistogramView() {
   View histogram;
   histogram.isCanvas = true;
   histogram.style.width = Size::full();

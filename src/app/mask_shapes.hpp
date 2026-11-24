@@ -14,7 +14,7 @@ struct MaskGeom {
   float S;      // the shorter document side (radius unit)
 };
 
-static MaskGeom radialGeom(const RadialShape &r) {
+inline MaskGeom radialGeom(const RadialShape &r) {
   MaskGeom g{};
   const float W = state.docWidth(), H = state.docHeight();
   g.S = std::min(W, H);
@@ -39,7 +39,7 @@ enum {
 
 // What is under (px, py)? Handles (only for the selected mask) win over the
 // body. The four handles sit on the rotated axes at the ellipse outline.
-static int maskHit(const RadialShape &r, float px, float py, bool handles) {
+inline int maskHit(const RadialShape &r, float px, float py, bool handles) {
   const MaskGeom g = radialGeom(r);
   const float tol = kMaskHitPx / state.zoom;
   if (handles) {
@@ -74,7 +74,7 @@ struct LinGeom {
   float ey() const { return cy + uy * len; }
 };
 
-static LinGeom linearGeom(const LinearShape &l) {
+inline LinGeom linearGeom(const LinearShape &l) {
   LinGeom g{};
   const float W = state.docWidth(), H = state.docHeight();
   g.S = std::min(W, H);
@@ -89,7 +89,7 @@ static LinGeom linearGeom(const LinearShape &l) {
 
 // Handles (selected mask only) sit where the axis crosses the two lines; the
 // body is the band between the lines.
-static int linearHit(const LinearShape &l, float px, float py, bool handles) {
+inline int linearHit(const LinearShape &l, float px, float py, bool handles) {
   const LinGeom g = linearGeom(l);
   const float tol = kMaskHitPx / state.zoom;
   if (handles) {
@@ -105,7 +105,7 @@ static int linearHit(const LinearShape &l, float px, float py, bool handles) {
 // ---- Rectangle mask geometry on the canvas (document pixels) ----
 // Same layout as the radial mask: a center, half-sizes along the rotated axes,
 // and four handles on the axes (here at the middle of each side).
-static MaskGeom rectGeom(const RectShape &r) {
+inline MaskGeom rectGeom(const RectShape &r) {
   MaskGeom g{};
   const float W = state.docWidth(), H = state.docHeight();
   g.S = std::min(W, H);
@@ -120,7 +120,7 @@ static MaskGeom rectGeom(const RectShape &r) {
 }
 
 // Handles (selected part only) win over the body, which is the rectangle.
-static int rectHit(const RectShape &r, float px, float py, bool handles) {
+inline int rectHit(const RectShape &r, float px, float py, bool handles) {
   const MaskGeom g = rectGeom(r);
   const float tol = kMaskHitPx / state.zoom;
   if (handles) {

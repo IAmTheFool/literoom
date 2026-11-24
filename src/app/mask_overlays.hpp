@@ -10,7 +10,7 @@
 // SAME BrushShape::prepare the renderer uses, so what is tinted is exactly what
 // gets adjusted. Cached until the strokes or the picture's size change (the
 // shape is compared, which is cheap next to rasterizing it).
-static std::shared_ptr<CanvasImage> brushTintImage(const BrushShape &b,
+inline std::shared_ptr<CanvasImage> brushTintImage(const BrushShape &b,
                                                    bool invert) {
   const float W = state.docWidth(), H = state.docHeight();
   const float sc =
@@ -45,7 +45,7 @@ static std::shared_ptr<CanvasImage> brushTintImage(const BrushShape &b,
   return img;
 }
 
-static void paintBrushTint(CanvasContext &ctx, const BrushShape &b,
+inline void paintBrushTint(CanvasContext &ctx, const BrushShape &b,
                            bool invert) {
   if (b.strokes.empty() && !invert)
     return; // nothing painted yet
@@ -55,7 +55,7 @@ static void paintBrushTint(CanvasContext &ctx, const BrushShape &b,
 
 // The pin marks where a brush mask's first stroke began (all a brush has
 // for an "outline"); the selected one is drawn solid.
-static void paintBrushPin(CanvasContext &ctx, const BrushShape &b,
+inline void paintBrushPin(CanvasContext &ctx, const BrushShape &b,
                           bool selected) {
   if (b.strokes.empty() || b.strokes.front().pts.empty())
     return;
@@ -75,7 +75,7 @@ static void paintBrushPin(CanvasContext &ctx, const BrushShape &b,
 
 // The brush's footprint at the pointer while painting: the rim, and where the
 // feather begins.
-static void paintBrushCursor(CanvasContext &ctx) {
+inline void paintBrushCursor(CanvasContext &ctx) {
   const MaskUi &u = state.mask;
   const float px = 1.0f / state.zoom;
   constexpr float kTwoPi = 6.28318530717959f;
@@ -101,14 +101,14 @@ static void paintBrushCursor(CanvasContext &ctx) {
 }
 
 // ---- Luminosity overlay ----
-static bool sameOwner(const std::weak_ptr<CanvasImage> &a,
+inline bool sameOwner(const std::weak_ptr<CanvasImage> &a,
                       const std::shared_ptr<CanvasImage> &b) {
   return !a.owner_before(b) && !b.owner_before(a);
 }
 
 // state.source box-downsampled by an integer factor to at most
 // kLumTintEdge on its long side (the source itself when already that small).
-static std::shared_ptr<CanvasImage> lumTintBase() {
+inline std::shared_ptr<CanvasImage> lumTintBase() {
   const std::shared_ptr<CanvasImage> src = state.source;
   if (!src || src->width <= 0 || src->height <= 0)
     return nullptr;
@@ -153,7 +153,7 @@ static std::shared_ptr<CanvasImage> lumTintBase() {
 // listed above it, but not this mask's own edits (which cannot change what it
 // selects). Cached until the shape, the picture's pixels or the mask's place in
 // the list change.
-static std::shared_ptr<CanvasImage>
+inline std::shared_ptr<CanvasImage>
 luminosityTintImage(const LuminosityShape &s, bool invert, int sel) {
   MaskUi &u = state.mask;
   if (u.lumTint && u.lumSel == sel && u.lumInvert == invert &&
@@ -198,7 +198,7 @@ luminosityTintImage(const LuminosityShape &s, bool invert, int sel) {
   return img;
 }
 
-static void paintLuminosityTint(CanvasContext &ctx, const LuminosityShape &s,
+inline void paintLuminosityTint(CanvasContext &ctx, const LuminosityShape &s,
                                 bool invert, int sel) {
   if (const auto img = luminosityTintImage(s, invert, sel))
     ctx.drawImage(*img, 0, 0, state.docWidth(), state.docHeight());
@@ -211,7 +211,7 @@ static void paintLuminosityTint(CanvasContext &ctx, const LuminosityShape &s,
 // mask (see luminosityTintImage); otherwise the weights need no pixels and
 // the bitmap is sized from the document. Cached on the parts in their in-view
 // form, so a rotate / crop / edit all rebuild it.
-static std::shared_ptr<CanvasImage> compositeTintImage(const Mask &m, int sel) {
+inline std::shared_ptr<CanvasImage> compositeTintImage(const Mask &m, int sel) {
   MaskUi &u = state.mask;
   const GeoFrame frame = state.adjust.geoFrame();
   bool usesPix = false;
@@ -286,12 +286,12 @@ static std::shared_ptr<CanvasImage> compositeTintImage(const Mask &m, int sel) {
   return img;
 }
 
-static void paintCompositeTint(CanvasContext &ctx, const Mask &m, int sel) {
+inline void paintCompositeTint(CanvasContext &ctx, const Mask &m, int sel) {
   if (const auto img = compositeTintImage(m, sel))
     ctx.drawImage(*img, 0, 0, state.docWidth(), state.docHeight());
 }
 
-static void paintSelectedObjectPrompts(CanvasContext &ctx) {
+inline void paintSelectedObjectPrompts(CanvasContext &ctx) {
   const MaskPart *part = selectedPart();
   if (!part || !std::holds_alternative<ObjectShape>(part->shape))
     return;
@@ -319,7 +319,7 @@ static void paintSelectedObjectPrompts(CanvasContext &ctx) {
 }
 
 // A part's outline / handles / pin (nothing for a luminosity range).
-static void paintPartOutline(CanvasContext &ctx, const MaskPart &p,
+inline void paintPartOutline(CanvasContext &ctx, const MaskPart &p,
                              const GeoFrame &frame, bool selected) {
   if (const auto r = radialInView(p, frame))
     paintRadialOutline(ctx, *r, selected);
@@ -333,7 +333,7 @@ static void paintPartOutline(CanvasContext &ctx, const MaskPart &p,
     paintPolygonOutline(ctx, *pg, selected);
 }
 
-static void paintMaskOverlay(CanvasContext &ctx) {
+inline void paintMaskOverlay(CanvasContext &ctx) {
   const MaskSet &ms = state.adjust.masks();
   const int sel = selMask();
   const int selP = selPart();

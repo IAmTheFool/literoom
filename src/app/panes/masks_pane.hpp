@@ -16,7 +16,7 @@ struct MaskPaneViews {
 // of the Adjust sliders, applied only where the shape is (see the "masks"
 // block). Pick or add a mask in the list; the selected one is drawn on the
 // image, where it can be dragged (inside = move, square handles = resize).
-static MaskPaneViews buildMaskPanes() {
+inline MaskPaneViews buildMaskPanes() {
   View maskPane;
   maskPane.style.width = Size::full();
   maskPane.style.direction = FlexDirection::Column;

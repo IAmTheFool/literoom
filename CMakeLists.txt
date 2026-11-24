@@ -21,9 +21,15 @@ endif()
 option(LITEROOM_ONNX     "literoom: object selection via ONNX Runtime" OFF)
 option(LITEROOM_TESTS    "literoom: build unit tests (Catch2)" ON)
 option(LITEROOM_SANITIZE "literoom: build the tests with AddressSanitizer" OFF)
+option(LITEROOM_TSAN     "literoom: build the tests with ThreadSanitizer (not together with LITEROOM_SANITIZE)" OFF)
 option(LITEROOM_ODR_TEST "literoom: build the one-definition check (compiles the whole app twice)" ON)
 set(ONNXRUNTIME_DIR "" CACHE PATH
     "Unpacked onnxruntime release (the folder containing include/ and lib/)")
+
+# ASan and TSan cannot be linked into one binary.
+if(LITEROOM_SANITIZE AND LITEROOM_TSAN)
+    message(FATAL_ERROR "LITEROOM_SANITIZE (ASan) and LITEROOM_TSAN (TSan) are mutually exclusive")
+endif()
 
 # MSVC's ASan is incompatible with the default /RTC1 runtime checks.
 if(LITEROOM_SANITIZE AND MSVC)
@@ -242,6 +248,17 @@ if(LITEROOM_TESTS)
     function(literoom_enable_sanitizers target env_var)
         cmake_parse_arguments(ARG "NO_LEAK_CHECK" "" "" ${ARGN})
         set(${env_var} "" PARENT_SCOPE)
+        if(LITEROOM_TSAN)
+            # Data races in the worker headers: ctest -L threaded --repeat until-fail:50
+            if(MSVC)
+                message(WARNING "LITEROOM_TSAN: MSVC has no ThreadSanitizer; ignored for ${target}")
+            else()
+                target_compile_options(${target} PRIVATE
+                    -fsanitize=thread -fno-omit-frame-pointer)
+                target_link_options(${target} PRIVATE -fsanitize=thread)
+            endif()
+            return()
+        endif()
         if(NOT LITEROOM_SANITIZE)
             return()
         endif()
@@ -262,6 +279,24 @@ if(LITEROOM_TESTS)
     # To add a test: create tests/cases/<name>.inc and #include it from
     # literoom_test.cpp. Nothing to change here.
     file(GLOB LITEROOM_CASES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cases/*.inc)
+
+    # A case file that literoom_test.cpp does not #include compiles into nothing
+    # and its tests silently never run. Fail at configure time instead. A file
+    # that is only included by another .inc goes in LITEROOM_CASE_HELPERS.
+    set(LITEROOM_CASE_HELPERS "")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/literoom_test.cpp)
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/tests/literoom_test.cpp _lt_src)
+    foreach(_case ${LITEROOM_CASES})
+        get_filename_component(_case_name ${_case} NAME)
+        if(NOT _case_name IN_LIST LITEROOM_CASE_HELPERS)
+            string(FIND "${_lt_src}" "\"cases/${_case_name}\"" _lt_pos)
+            if(_lt_pos EQUAL -1)
+                message(SEND_ERROR
+                    "tests/cases/${_case_name} is not #included from tests/literoom_test.cpp: its tests would never run")
+            endif()
+        endif()
+    endforeach()
 
     add_executable(literoom_test tests/literoom_test.cpp ${LITEROOM_CASES})
     # Cases include headers by src-relative path ("core/pixel_math.hpp") and each
