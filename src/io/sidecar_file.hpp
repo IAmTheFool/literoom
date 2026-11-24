@@ -32,6 +32,14 @@ enum class SidecarRead {
   Unreadable, // there, but can't be checked, opened or read
 };
 
+// The sidecar's file as a filesystem path (UTF-8 safe). The ONE definition of
+// where a picture's sidecar lives: readSidecarFile reads it, and every writer
+// (the editor's saveSidecar, Sync Settings) writes it, through this, so reading
+// and writing can't disagree.
+inline std::filesystem::path sidecarFilePath(const std::string &imagePath) {
+  return fsPath(sidecarFileOf(imagePath));
+}
+
 // Reads `imagePath`'s sidecar (a virtual copy's path reads that copy's own
 // file). *text is only filled for Ok. For TooBig and Unreadable, *why (if
 // given) gets a short reason for a status line. Any thread.
@@ -43,7 +51,7 @@ inline SidecarRead readSidecarFile(const std::string &imagePath,
       *why = reason;
     return r;
   };
-  const std::filesystem::path p = fsPath(sidecarFileOf(imagePath));
+  const std::filesystem::path p = sidecarFilePath(imagePath);
   std::error_code ec;
   const bool exists = std::filesystem::exists(p, ec);
   if (ec)

@@ -1,20 +1,13 @@
-// app/decode.hpp: opening a file: the background decode worker
+// workers/decode_job.hpp - opening a file: the background decode job.
 //
-// UI-shell code split out of main.cpp. A plain move, apart from the failure
-// handling in runDecodeJob (see below).
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
-#pragma once
-#include <exception>
-#include <new>
-
-// ---------------- Opening a file (background decode) ----------------
-// Decoding a big PNG/JPEG takes long enough to freeze the window, so it runs
-// on its own thread. Same contract as RenderWorker / GeometryWorker: submit()
-// supersedes any earlier request, the finished result is parked until the UI
-// thread collect()s it, and notify_ wakes the sleeping event loop. Until the
-// result lands the previously open image stays fully usable; nothing about
-// the editor state changes until adoptDecoded() swaps the new file in.
+// Moved out of app/decode.hpp (which is now gone). Decoding a big PNG/JPEG takes
+// long enough to freeze the window, so it runs on its own thread. Same contract
+// as the render and geometry workers: submit() supersedes any earlier request,
+// the finished result is parked until the UI thread collect()s it, and the
+// notify callback wakes the sleeping event loop. Until the result lands the
+// previously open image stays fully usable; nothing about the editor state
+// changes until adoptDecoded() (app/filmstrip.hpp) swaps the new file in. The
+// one DecodeWorker lives in `Workers` (app/workers.hpp).
 //
 // A decode already running can't be interrupted (the image libraries have no
 // cancel hook), so opening a second file queues behind it and the first
@@ -26,6 +19,20 @@
 // open-file code expects an ordinary "couldn't open it" result instead. So the
 // job catches it and reports it the way every other failure is reported: an
 // empty `image` plus `error`. The previously open picture stays open.
+#pragma once
+#include <exception>
+#include <memory>
+#include <new>
+#include <optional>
+#include <string>
+
+#include "core/image16.hpp"
+#include "io/image_meta.hpp"   // exifOrientationOf
+#include "io/image_source.hpp" // openUpright
+#include "io/virtual_copy.hpp" // vcImageOf
+#include "liteui.hpp"
+#include "workers/latest_worker.hpp"
+
 struct DecodeJob {
   std::string path;
 };
@@ -40,7 +47,7 @@ struct DecodeResult {
 
 // Worker thread only. Always returns a value (a failure is an empty `image`
 // plus `error`): a decode can't be cancelled part-way.
-static std::optional<DecodeResult> runDecodeJob(DecodeJob &&job, WorkerCancel) {
+inline std::optional<DecodeResult> runDecodeJob(DecodeJob &&job, WorkerCancel) {
   DecodeResult r;
   r.path = job.path;
   try {
@@ -92,5 +99,3 @@ public:
 private:
   std::string pendingPath_; // UI thread only
 };
-
-static DecodeWorker decodeWorker;

@@ -24,7 +24,6 @@ static std::vector<LutRow> gLuts;
 static bool gLutsLoaded =
     false; // the folder was listed since the pane was last opened
 static uint64_t gLutPaintCounter = 0;
-static LutPreviewWorker lutPreviewWorker;
 static uint64_t gLutSerial = 0; // the job whose results are taken in
 
 // What the previews were made for: the picture's pixels and the edit state. A
@@ -77,7 +76,7 @@ static void refreshLuts() {
   gLutsLoaded = true;
   if (!same) { // a file came or went (an import, or one removed by hand): make
                // the previews again
-    lutPreviewWorker.cancel();
+    workers().lutPreview.cancel();
     gLutBuilt.valid = false;
   }
   state.markDirty();
@@ -151,7 +150,7 @@ static void setLutAmount(float v) {
 // made, and, with the pane open, starts a new batch when the list or the
 // picture's look has changed since the last.
 static void pollLutPreviews() {
-  for (LutPreviewResult &r : lutPreviewWorker.collect()) {
+  for (LutPreviewResult &r : workers().lutPreview.collect()) {
     if (r.serial != gLutSerial)
       continue; // a batch that was replaced
     for (LutRow &row : gLuts)
@@ -186,7 +185,7 @@ static void pollLutPreviews() {
   job.params = state.adjust.buildRenderParams();
   for (const LutRow &row : gLuts)
     job.items.push_back(row.entry);
-  lutPreviewWorker.submit(std::move(job));
+  workers().lutPreview.submit(std::move(job));
   gLutBuilt = LutBuilt{true, state.source.get(), state.adjust.version()};
   state.markDirty();
 }

@@ -10,14 +10,16 @@ This page describes what is in that file, when it is written and read, and how l
 |---|---|
 | Turning the edits into JSON and back (pure functions on plain values), the whole-file wrapper (`sidecarFileText`: `app`, `version`, `image`, then `meta`, `edits`, `snapshots`) and the constant `kSidecarVersion` | `sidecar.hpp` |
 | The JSON value, writer and parser | `minijson.hpp` |
-| File handling: when to save, the temp-file-and-rename write, and the version, size and picture-size checks on load | `main.cpp`, next to `openImage` (`saveSidecar`, `loadSidecar`, `autosaveSidecar`, `flushSidecar`) |
+| **Reading the file from disk**: which file is "the sidecar" (`sidecarFilePath`), absent vs. unreadable vs. empty vs. too big (`readSidecarFile`, `SidecarRead`), and the 64 MiB limit (`kMaxSidecarBytes`). The one reader for the editor, Sync Settings, the thumbnail worker and batch export | `sidecar_file.hpp` |
+| The checks every reader makes on the text it got: valid JSON object, not from a newer version, recorded size matches (`sidecarCheckText`) | `sidecar.hpp` |
+| Editor file handling: when to save, the temp-file-and-rename write, and what the editor does about each load result | `main.cpp`, next to `openImage` (`saveSidecar`, `loadSidecar`, `autosaveSidecar`, `flushSidecar`) |
 | `AdjustmentSet::toJson()` / `loadJson()` | `adjustment_set.hpp` (thin wrappers around `sidecar.hpp`) |
 | Rating, flag and color label (the `meta` object) and the filmstrip filter | `photo_meta.hpp` (values, JSON, `MetaFilter`); `sidecarFileText`, `sidecarMetaFromRoot` and `sidecarScan` in `sidecar.hpp`; the commands (`ratePhoto`, `flagPhoto`, `labelPhoto`) and the filter bar in `main.cpp` |
 | **Named snapshots** (the `snapshots` array, see [below](#named-snapshots)) | `NamedSnapshot`, `SnapshotList`, `sidecarSnapshotsToJson` / `FromJson` and `sanitizeSnapshotName` in `sidecar.hpp`; `AdjustmentSet::currentEdits()` / `restoreEdits()` in `adjustment_set.hpp`; the pane and its commands (`addSnapshot`, `applySnapshotEntry`, `deleteSelectedSnapshot`) in `main.cpp` |
 | **Virtual copies** (more sidecars for one picture, see [below](#virtual-copies)) | `virtual_copy.hpp` (the path marker, the file-name rules, the folder scan); `sidecarFileOf` in `sidecar.hpp`; `createVirtualCopy`, `deleteVirtualCopy` and the filmstrip code in `main.cpp` |
 | The separate **preset** file (a saved look, see [Presets](#presets-a-related-file) below) | `preset.hpp`, which reuses the readers and writers in `sidecar.hpp` |
-| Putting a look into **another picture's** sidecar without opening it (Sync Settings, see [below](#syncing-a-look-onto-other-pictures)) | `sidecarSyncLook` in `sidecar.hpp`; the file reading, atomic write and worker are in `main.cpp` (`readSidecarText`, `writeTextAtomic`, `runSyncJob`) |
-| Reading a picture's sidecar for **batch export** (a local `AdjustmentSet`, never the editor's) | `exportLoadEdits` and `exportPicture` in `export_worker.hpp` |
+| Putting a look into **another picture's** sidecar without opening it (Sync Settings, see [below](#syncing-a-look-onto-other-pictures)) | `sidecarSyncLook` in `sidecar.hpp`; the file reading is `readSidecarFile` (`sidecar_file.hpp`); the atomic write and the worker job are `writeTextAtomic`, `syncOne` and `runSyncJob` in `sync_job.hpp` |
+| Reading a picture's sidecar for **batch export** (a local `AdjustmentSet`, never the editor's) | `exportLoadEdits` and `exportPicture` in `export_worker.hpp` (reading through `readSidecarFile`) |
 | The **3D LUT** (the `lut` object, and `LUT Amount` in `adjust`; see [below](#the-3d-lut)) | `LutRef` and the name / hash helpers in `lut3d.hpp`; `sidecarLutToJson` / `sidecarLutFromJson` in `sidecar.hpp`; the table files, the folder and the cache in `lut_library.hpp` |
 
 ## What the file contains
@@ -100,14 +102,37 @@ A picture's LUT is stored as a **reference**, never as a table:
 - **If saving fails** (a read-only folder, for example) the status bar says "Couldn't save edits...". The change still counts as seen, so a failing disk is not retried every frame, only on the next edit. After a successful save of **edits** the picture's thumbnail in the filmstrip gets its "has edits" dot; a save that only records a rating, flag or color label does not set it.
 - **Written for other pictures** by Sync Settings, and by a batch rating when pictures are selected: the sidecars of the pictures selected in the filmstrip are rewritten in the background (see [below](#syncing-a-look-onto-other-pictures)). The open picture is never one of them.
 - **Not written** if you opened a picture and changed nothing. The open picture's sidecar is written only by the editor (autosave); other pictures' sidecars are written only by the Sync worker (Sync Settings, or a batch rating), never behind the editor's back. A picture that is rated and has no edits gets a sidecar whose `edits` are the neutral ones.
-- **Read** when the picture is opened. A missing file is normal. A sidecar is also read, without opening the picture, by the thumbnail worker (`sidecarScan`: the "has edits" dot and the rating, flag and label), by the Sync worker (`sidecarReadForRewrite`) and by batch export (`exportLoadEdits`, into a local `AdjustmentSet`; an unusable sidecar skips that picture with a reason instead of exporting it unedited).
+- **Read** when the picture is opened. A missing file is normal. A sidecar is also read, without opening the picture, by the thumbnail worker (`sidecarScan`: the "has edits" dot and the rating, flag and label), by the Sync worker (`syncOne` reads the file, then `sidecarReadForRewrite` checks and loads it) and by batch export (`exportLoadEdits`, into a local `AdjustmentSet`; an unusable sidecar skips that picture with a reason instead of exporting it unedited). All four get the file through `readSidecarFile` (see the next section).
 - **The undo history is not saved.** It starts fresh each time the picture is opened.
+
+## Reading the file from disk
+
+`readSidecarFile(imagePath, &text, &why)` in `io/sidecar_file.hpp` is the **only** code that opens a sidecar for reading, and `sidecarFilePath` (same header) is the only definition of where it lives, so the editor's `saveSidecar` and Sync Settings' `writeTextAtomic` write to exactly the file that is read. A virtual copy's path reads and writes that copy's own file. It returns one of five states and fills `text` only for `Ok`:
+
+| State | Meaning |
+|---|---|
+| `Absent` | No such file: normal for a picture nobody has touched. |
+| `Ok` | `text` holds the file. |
+| `Empty` | The file is there and holds nothing (nothing to lose). |
+| `TooBig` | Over `kMaxSidecarBytes` (64 MiB). |
+| `Unreadable` | There, but it can't be checked, opened or read. |
+
+**An existing file that can't be opened is `Unreadable`, never `Absent`** (and so is one whose existence can't even be checked). Treating it as absent would let a caller rebuild the sidecar from nothing and replace the real file, losing crop, rotation and masks.
+
+What the text *means* is `sidecar.hpp`'s job: `sidecarCheckText` makes the checks every reader needs (a JSON object, a `version` no higher than `kSidecarVersion`, a recorded size that matches the picture), then `sidecarEditsFromJson` loads the edits. What to do about a bad result is each caller's policy:
+
+| Caller | `Absent` | `Empty`, `TooBig`, `Unreadable`, or a failed check |
+|---|---|---|
+| Editor (`loadSidecar`) | Opens clean, no message | Opens clean and says why in the status bar |
+| Sync Settings, batch rating (`syncOne`) | A new sidecar is made (the size comes from the picture's header) | The picture is **skipped** with a reason; the file is never overwritten |
+| Batch export (`exportLoadEdits`) | Exported with neutral edits | The picture is **skipped** with a reason, never exported unedited |
+| Thumbnail worker | No "has edits" dot | The file counts as there, so the dot is shown |
 
 ## What happens when a file is bad
 
 A sidecar can be damaged, hand-edited, written by a newer version, or written for a different picture. Loading is built so that **no file can put the editor into a state its own UI could not reach**:
 
-- A file is **ignored** (the editor starts clean and says so in the status bar) when it is empty or larger than 64 MiB, can't be read, isn't valid JSON, has a missing or higher `version` ("made by a newer Literoom"), was written for a different-sized picture, or has an `edits` part that can't be loaded.
+- A file is **ignored** (the editor starts clean and says so in the status bar; see the table above for what Sync and export do instead) when it is empty or larger than 64 MiB (`kMaxSidecarBytes`), can't be read (`readSidecarFile` says `Unreadable`), isn't valid JSON, has a missing or higher `version` ("made by a newer Literoom"), was written for a different-sized picture, or has an `edits` part that can't be loaded.
 - Inside a valid file, nothing is trusted. Slider values are clamped to their ranges, and non-numbers become the neutral value.
 - A tone curve must keep the editor's own rules (2 to 16 points, end points at x = 0 and 255, the rest at least a minimum gap apart). Anything else becomes a straight line.
 - The crop is checked against the size of the turned and straightened picture, and dropped if it does not fit.
@@ -167,14 +192,14 @@ Things that differ from a sidecar:
 
 - **No sidecar yet:** a new file is made. It must record the picture's size, so the background job reads the size from the picture file's **header** (`image_source::uprightSize`: no pixels are decoded; a header the decoder can't read falls back to a full decode) and uses its upright size (a camera's quarter turn swaps width and height). A picture that can't be opened (missing, a PNG cut off before its last chunk, not a PNG or JPEG) is skipped with *"couldn't open it"* and the reason. A picture whose header is fine but whose pixel data is damaged gets its size recorded here and only fails when it is opened.
 - **A sidecar exists:** its recorded `image.width` and `image.height` are used, so no decode is needed. The file is read through `sidecarEditsFromJson`, **only the look is replaced** (the four groups, and the `lut`: a look without a LUT clears the picture's LUT, like any other part of the look), and the whole thing is written back through `sidecarEditsToJson`. The picture's own crop, rotation, straighten angle and masks are kept, so a crop that suits one photo is never pushed onto another.
-- **A file that can't be trusted is never overwritten.** The picture is *skipped*, and the status bar says why, when the file is not valid JSON or not an object, is from a newer version (or has none), has no picture size, was written for a different size than the one given, or has an `edits` part that can't be loaded. The edits in such a file might still be recoverable by hand, so syncing leaves it alone.
+- **A file that can't be trusted is never overwritten.** The picture is *skipped*, and the status bar says why, when the file is empty (*"its saved edits file is empty"*), over 64 MiB or can't be read (*"couldn't read its saved edits"*, with the reason from `readSidecarFile` in brackets), or is not valid JSON or not an object, is from a newer version (or has none), has no picture size, was written for a different size than the one given, or has an `edits` part that can't be loaded. The edits in such a file might still be recoverable by hand, so syncing leaves it alone.
 - The picture's own `meta` (rating, flag, color label) is read from the old file and written back unchanged: syncing a look never changes how a picture is rated. A picture with no `meta` stays without one.
 - The picture's own **snapshots** are read and written back as well, each keeping the look it captured: syncing a look changes the picture's current edits, never its saved snapshots. A picture with none stays without any.
 - The rewritten file is validated and clamped by the same loader as an opened one. That is what keeps a hand-edited sidecar from carrying bad values across a sync.
 
 The result is the same file the app would write if you had opened the picture, applied the look and closed it, except that there is no undo step: the picture's history is not saved, and it starts fresh when the picture is next opened. Syncing the same look twice produces an identical file. Thumbnails of synced pictures get the "has edits" dot at once, but, as for any picture that is not open, they show the look only after the picture has been opened and left.
 
-The batch runs on a worker that is never cancelled, and opening pictures waits until it is done; see [threading.md](threading.md#the-sync-worker-is-a-batch-that-is-never-superseded).
+The batch is the job in `workers/sync_job.hpp` (`runSyncJob`, one `syncOne` per picture, each guarded on its own so an exception on one picture is a skipped picture, not a lost batch). It runs on a worker that is never cancelled, and opening pictures waits until it is done; see [threading.md](threading.md#the-sync-worker-is-a-batch-that-is-never-superseded).
 
 **Copy and Paste Settings** (Ctrl+Shift+C / V) work on the open picture only, hold the look in memory (not a file, and not kept after the app closes), and apply it as a preset step. See [undo-and-history.md](undo-and-history.md#copy-and-paste-settings).
 
@@ -241,7 +266,7 @@ How the UI treats them (`main.cpp`):
 
 ## Changing the format
 
-- `kSidecarVersion` (currently 1) is written to every file by `sidecarFileText` (so by every writer) and checked by `loadSidecar` and, for other pictures' files, by `sidecarReadForRewrite`. A build whose own `kSidecarVersion` is lower than the file's ignores the **whole** file ("made by a newer Literoom"), so older builds cannot read newer sidecars. Bump it only for a change an older reader could not handle safely; additive changes (see below) usually don't need one.
+- `kSidecarVersion` (currently 1) is written to every file by `sidecarFileText` (so by every writer) and checked by `sidecarCheckText`, which `loadSidecar`, `sidecarReadForRewrite` (other pictures' files) and `exportLoadEdits` all call. A build whose own `kSidecarVersion` is lower than the file's ignores the **whole** file ("made by a newer Literoom"), so older builds cannot read newer sidecars. Bump it only for a change an older reader could not handle safely; additive changes (see below) usually don't need one.
 - The `adjust` keys are slider **labels**. Renaming a label in `kAdjustmentSpecs` would orphan existing values in sidecars **and in saved presets** (see [extending.md](extending.md)).
 - Adding a field is safe if the loader gives it a default and clamps it.
 - **The 3D LUT was added without a version bump**: `lut` is a new optional key and `LUT Amount` a new `adjust` key. An older build ignores both (it opens the picture without the LUT) and its next save drops them, which is the usual cost of an additive change; a newer build reads every older file unchanged.

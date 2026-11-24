@@ -322,9 +322,9 @@ struct EditorState {
       0; // bumps on every opened file (keys segmenter caches)
 
   // True while `previewImage` stands in for `image`: during a drag, and after
-  // it until the background full-resolution render lands (renderWorker).
+  // it until the background full-resolution render lands (workers().render).
   bool showPreview() const {
-    return previewImage && (dragging || renderWorker.outstanding());
+    return previewImage && (dragging || workers().render.outstanding());
   }
 
   bool previewDocActive() const {

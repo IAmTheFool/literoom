@@ -20,8 +20,7 @@ constexpr float kFilmCellW = 108.0f;
 constexpr size_t kFilmMaxFiles = 5000; // a bigger folder shows its first 5000
 
 // makeThumb / ThumbWorker / kFilmThumbW,H live in thumb_worker.hpp.
-static ThumbWorker thumbWorker{
-    [](const std::string &path) { return exifOrientationOf(path); }};
+// (the one ThumbWorker is workers().thumb, app/workers.hpp)
 
 // Lists the JPEG / PNG files of `folder` into a new strip (not yet shown).
 using VcMap = std::map<std::string, std::vector<int>>; // see listVirtualCopies
@@ -124,7 +123,7 @@ static void filmQueueThumbs() {
         want(mid - d);
     }
   }
-  thumbWorker.setQueue(std::move(todo));
+  workers().thumb.setQueue(std::move(todo));
 }
 
 // A strip holding exactly `paths` (already sorted). All come from one folder.
@@ -241,7 +240,7 @@ static void filmApplyMeta(const std::string &path, const PhotoMeta &m) {
 // UI thread: takes in the thumbnails the worker has made.
 static void collectThumbJobs() {
   bool metaChanged = false;
-  for (auto &r : thumbWorker.collect()) {
+  for (auto &r : workers().thumb.collect()) {
     FilmStrip &f = state.film;
     const auto it = f.byName.find(filmLower(baseName(r.path)));
     if (it == f.byName.end() || f.files[it->second].path != r.path)
@@ -295,7 +294,7 @@ static void filmOpenIndex(int i) {
           vcImageOf(state.imagePath)) { // another set of edits for the picture
                                         // on screen: same file, same pixels,
     // so skip the decode and adopt them exactly as a finished decode would
-    decodeWorker
+    workers().decode
         .invalidate(); // a decode of some other file is no longer wanted
     DecodeWorker::Result r;
     r.path = path;
@@ -305,7 +304,7 @@ static void filmOpenIndex(int i) {
     return;
   }
   setStatus("Opening " + f.files[static_cast<size_t>(i)].name + "...", false);
-  decodeWorker.submit(path);
+  workers().decode.submit(path);
   filmQueueThumbs();
 }
 

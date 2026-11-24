@@ -20,7 +20,7 @@
 // stepping back to "Original" and closing the app keeps the edits above it.
 
 static std::filesystem::path sidecarPath(const std::string &imagePath) {
-  return fsPath(sidecarFileOf(imagePath));
+  return sidecarFilePath(imagePath); // io/sidecar_file.hpp: the one definition
 }
 
 // A picture's name for messages and the title bar: a virtual copy shows as

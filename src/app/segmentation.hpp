@@ -1,191 +1,13 @@
-// app/segmentation.hpp: object segmentation worker and engine info
+// app/segmentation.hpp: the UI-thread glue of object segmentation
 //
-// UI-shell code split out of main.cpp. A plain move, apart from the failure
-// handling in segmentObject / runSegmentJob (see below).
+// The engine and the job (SamEngine, SegmentRequest, SegmentResult,
+// runSegmentJob) are pure and live in workers/segment_job.hpp; the worker object
+// is workers().segment and the engine is workers().sam (app/workers.hpp). What
+// is left here commits a finished segmentation into `state`.
+//
 // Included only by main.cpp, at the spot where this code used to be, so it
 // is not self-contained: it uses what main.cpp defines before it.
 #pragma once
-#include <exception>
-#include <new>
-
-// ---------------- Object segmentation (background) ----------------
-struct SegmentRequest {
-  std::shared_ptr<const CanvasImage> image; // the untouched original
-  uint64_t imageKey = 0;                    // state.imageSerial
-  std::vector<ObjectPrompt> prompts;        // original-picture fractions
-  int maskIdx = -1, part = -1;              // where the result goes
-  bool prefetch = false; // encode only (warm the model), no result map
-};
-
-// ---- Segmentation engine info (SAM model, with the color-grow wand of
-// seg_basic.hpp as fallback) ----
-
-// Which engine is active, shown in the Object panel (written by the worker,
-// read by the UI thread's label poll).
-static std::mutex gSegInfoMutex;
-static std::string gSegInfo = "Engine: loads on first use";
-static void setSegInfo(std::string s) {
-  std::lock_guard<std::mutex> lk(gSegInfoMutex);
-  gSegInfo = std::move(s);
-}
-static std::string getSegInfo() {
-  std::lock_guard<std::mutex> lk(gSegInfoMutex);
-  return gSegInfo;
-}
-
-// Models: $LITEROOM_MODELS, else a "models" folder next to the executable.
-static std::string samModelDir() {
-  if (const char *e = std::getenv("LITEROOM_MODELS"); e && *e)
-    return e;
-#if defined(_WIN32)
-  wchar_t wbuf[MAX_PATH];
-  const DWORD n = GetModuleFileNameW(nullptr, wbuf, MAX_PATH);
-  if (n > 0 && n < MAX_PATH) {
-    std::wstring w(wbuf, n);
-    const size_t slash = w.find_last_of(L"\\/");
-    if (slash != std::wstring::npos)
-      w.resize(slash);
-    const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0,
-                                        nullptr, nullptr);
-    std::string s(len > 0 ? static_cast<size_t>(len - 1) : 0, '\0');
-    if (len > 0)
-      WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), len, nullptr,
-                          nullptr);
-    return s + "\\models";
-  }
-#else
-  char buf[4096];
-  const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-  if (n > 0) {
-    std::string p(buf, static_cast<size_t>(n));
-    const size_t slash = p.find_last_of('/');
-    if (slash != std::string::npos)
-      return p.substr(0, slash) + "/models";
-  }
-#endif
-  return "models";
-}
-
-// Failure handling.
-//  * Loading the model: a load that THROWS (the ONNX runtime reports a bad or
-//    missing model that way) is the same as one that returns false: SAM is
-//    unavailable and the color-grow wand takes over, with the reason in the
-//    engine label. If it were left to propagate, `backend` would stay 0 and
-//    every later job would try the load (and fail) all over again.
-//  * Encoding: the encoder's cache key is cleared BEFORE the call and set only
-//    after it succeeds. A throw or a failure part-way leaves the encoder in an
-//    unknown state, and a stale key would let the next job for the previous
-//    picture skip the encode and decode against it.
-//  * Anything else thrown (decoding, the wand, an allocation) is caught by
-//    runSegmentJob below and reported through SegmentResult::error.
-
-// Worker thread only. Prefetch (no prompts): load + encode, return null with
-// no error. Falls back to the color-grow stand-in when SAM is unavailable.
-static std::shared_ptr<const ObjectMap>
-segmentObject(const CanvasImage &img, uint64_t key,
-              const std::vector<ObjectPrompt> &prompts, std::string *err,
-              const std::atomic<uint64_t> *latest, uint64_t gen) {
-  static sam::Segmenter seg;
-  static int backend = 0; // 0 untried, 1 SAM, -1 fallback
-  constexpr uint64_t kNoKey = ~uint64_t{0};
-  static uint64_t encodedKey = kNoKey; // the picture the encoder holds, if any
-  if (backend == 0) {
-    const std::string dir = samModelDir();
-    std::string e;
-    bool loaded = false;
-    try {
-      loaded = seg.load(dir + "/mobile_sam.encoder.onnx",
-                        dir + "/mobile_sam.decoder.onnx", &e);
-    } catch (const std::exception &ex) {
-      loaded = false;
-      e = ex.what();
-    } catch (...) {
-      loaded = false;
-      e = "unexpected error while loading the model";
-    }
-    if (loaded) {
-      backend = 1;
-      setSegInfo("Engine: MobileSAM");
-    } else {
-      backend = -1;
-      setSegInfo("Engine: basic color grow (" + e + "; looked in " + dir + ")");
-    }
-  }
-  if (backend < 0)
-    return prompts.empty()
-               ? nullptr
-               : segmentObjectWand(img, key, prompts, err, latest, gen);
-
-  if (encodedKey != key) {
-    encodedKey = kNoKey; // the encoder is in flux until encode() succeeds
-    if (!seg.encode(img.pixels.data(), img.width, img.height, err))
-      return nullptr;
-    encodedKey = key;
-  }
-  if (prompts.empty() ||
-      (latest && latest->load(std::memory_order_relaxed) != gen))
-    return nullptr; // prefetch, or superseded while encoding
-
-  std::vector<sam::Point> pts;
-  pts.reserve(prompts.size());
-  for (const ObjectPrompt &p : prompts)
-    pts.push_back({p.x, p.y, p.fg});
-  std::vector<float> logits;
-  int w = 0, h = 0;
-  if (!seg.decode(pts, &logits, &w, &h, err))
-    return nullptr;
-  auto m = std::make_shared<ObjectMap>();
-  m->w = w;
-  m->h = h;
-  m->id = nextObjectMapId();
-  m->a.resize(logits.size());
-  for (size_t i = 0; i < logits.size(); ++i) // soft edge: sigmoid of the logit
-    m->a[i] = static_cast<uint8_t>(
-        std::lround(255.0f / (1.0f + std::exp(-logits[i] * kSamSoftness))));
-  return m;
-}
-
-struct SegmentResult {
-  SegmentRequest req;                   // image dropped; prompts + target kept
-  std::shared_ptr<const ObjectMap> map; // null on failure
-  std::string error;
-};
-
-// Worker thread only. Always returns a value (null `map` + `error` on failure).
-// An exception from the segmenter is caught here and becomes `error`, which
-// adoptSegment already shows ("Object selection failed: ..." / "... unavailable:
-// ..." for a prefetch): LatestWorker would otherwise park it and rethrow it
-// from collect() on the UI thread, where nothing catches it.
-static std::optional<SegmentResult> runSegmentJob(SegmentRequest &&req,
-                                                  WorkerCancel c) {
-  SegmentResult r;
-  try {
-    if (!req.image)
-      r.error = "no picture to analyze";
-    else
-      r.map = segmentObject(*req.image, req.imageKey, req.prompts, &r.error,
-                            c.latest, c.gen);
-  } catch (const std::bad_alloc &) {
-    r.map = nullptr;
-    r.error = "not enough memory";
-  } catch (const std::exception &e) {
-    r.map = nullptr;
-    r.error = e.what();
-    if (r.error.empty())
-      r.error = "unexpected error";
-  } catch (...) {
-    r.map = nullptr;
-    r.error = "unexpected error";
-  }
-  r.req = std::move(req);
-  r.req.image.reset();
-  return r;
-}
-
-// Same protocol as RenderWorker / DecodeWorker (see latest_worker.hpp).
-using SegmentWorker = LatestWorker<SegmentRequest, SegmentResult>;
-
-static SegmentWorker segmentWorker{runSegmentJob};
 
 // UI thread: commits a finished segmentation. Prompts and map land in ONE
 // undo step. A result for a mask/part that is gone (deleted, undone away) is
@@ -230,7 +52,7 @@ static void adoptSegment(SegmentWorker::Result &&r) {
 
 // Polled once per frame from flushPendingAdjust.
 static void collectSegmentJob() {
-  if (auto r = segmentWorker.collect())
+  if (auto r = workers().segment.collect())
     adoptSegment(std::move(*r));
 }
 

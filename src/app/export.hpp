@@ -15,9 +15,8 @@
 // edits are flushed to disk first. Unlike Sync it can be stopped: Stop Export
 // drops what is queued and abandons the picture being rendered. Export only
 // READS sidecars, so it does not block opening pictures or editing; a picture
-// is exported with the edits it has on disk when the batch reaches it.
-static ExportWorker exportWorker;
-
+// is exported with the edits it has on disk when the batch reaches it. The
+// worker itself is workers().exporter (app/workers.hpp).
 struct ExportRun {
   bool active = false;
   size_t total = 0, ok = 0, bad = 0, cancelled = 0, shown = 0;
@@ -26,7 +25,7 @@ struct ExportRun {
 static ExportRun exportRun;
 
 static bool exportBusy() {
-  if (!exportWorker.busy())
+  if (!workers().exporter.busy())
     return false;
   setStatus("Wait for the export to finish (or use Stop Export)", true);
   return true;
@@ -69,7 +68,7 @@ static void startExportBatch(std::vector<std::string> paths) {
   s.overwrite = state.exportOverwrite;
   s.folder = *dir;
   const size_t n = paths.size();
-  if (!exportWorker.start(std::move(paths), std::move(s)))
+  if (!workers().exporter.start(std::move(paths), std::move(s)))
     return;
   exportRun = ExportRun{};
   exportRun.active = true;
@@ -82,8 +81,8 @@ static void exportSelected() { startExportBatch(exportTargets(true)); }
 static void exportAllShown() { startExportBatch(exportTargets(false)); }
 
 static void stopExport() {
-  if (exportWorker.busy()) {
-    exportWorker.cancel();
+  if (workers().exporter.busy()) {
+    workers().exporter.cancel();
     setStatus("Stopping the export...", false);
   }
 }
@@ -94,8 +93,8 @@ static void collectExportJob() {
     return;
   // Ask BEFORE collecting: if the worker was already done, collect() below
   // returns the last outcomes and nothing more can arrive.
-  const bool finished = !exportWorker.busy();
-  for (const ExportOutcome &o : exportWorker.collect()) {
+  const bool finished = !workers().exporter.busy();
+  for (const ExportOutcome &o : workers().exporter.collect()) {
     if (o.ok)
       ++exportRun.ok;
     else if (o.cancelled)

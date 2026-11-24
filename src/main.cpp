@@ -71,11 +71,8 @@
 #include "workers/lut_preview_worker.hpp"
 #include "workers/thumb_worker.hpp"
 
-constexpr float kSamSoftness =
-    2.0f; // logit -> coverage steepness (edge softness)
-
 #include "app/constants.hpp"
-#include "app/render_worker.hpp"
+#include "app/workers.hpp" // every background worker, in one place
 #include "app/editor_state.hpp"
 #include "app/ui_state.hpp"
 #include "app/canvas_view.hpp"
@@ -84,7 +81,6 @@ constexpr float kSamSoftness =
 #include "app/geometry_worker.hpp"
 #include "app/crop_tool.hpp"
 #include "app/rotate.hpp"
-#include "app/decode.hpp"
 #include "app/segmentation.hpp"
 #include "app/saved_edits.hpp"
 #include "app/lut_pane.hpp"
@@ -147,15 +143,8 @@ int main() {
   // between monitors. The handler runs before LiteUI relayouts and repaints.
   setDpr(ui.contentScale());
   ui.setScaleChangedHandler([&ui] { setDpr(ui.contentScale()); });
-  // A finished background render wakes the (otherwise sleeping) event loop.
-  renderWorker.setNotify([&ui] { ui.wake(); });
-  geometryWorker.setNotify([&ui] { ui.wake(); });
-  thumbWorker.setNotify([&ui] { ui.wake(); });
-  decodeWorker.setNotify([&ui] { ui.wake(); });
-  segmentWorker.setNotify([&ui] { ui.wake(); });
-  syncWorker.setNotify([&ui] { ui.wake(); });
-  exportWorker.setNotify([&ui] { ui.wake(); });
-  lutPreviewWorker.setNotify([&ui] { ui.wake(); });
+  // A finished background job wakes the (otherwise sleeping) event loop.
+  workers().setNotify([&ui] { ui.wake(); });
 
   installShortcuts(ui);
 
@@ -214,13 +203,7 @@ int main() {
   ui.setRoot(std::move(root));
   ui.run();
   flushSidecar();            // edits made since the last autosave
-  renderWorker.shutdown();   // join the worker before `ui` goes out of scope
-  geometryWorker.shutdown(); // ditto
-  decodeWorker.shutdown();   // ditto (waits out a decode still running)
-  thumbWorker.shutdown();    // ditto
-  segmentWorker.shutdown();
-  syncWorker.shutdown();       // ditto (finishes the batch it is writing)
-  exportWorker.shutdown();     // ditto (abandons the picture it is rendering)
-  lutPreviewWorker.shutdown(); // ditto
+  workers().shutdown();      // join every worker thread before `ui` goes out of
+                             // scope (a decode still running is waited out)
   return 0;
 }

@@ -5,13 +5,26 @@ Reference for every header under `src/app/`, the UI shell of Literoom: the code 
 ## How these files fit together
 
 - **One translation unit.** Every file is a `#pragma once` header that only `main.cpp` includes, in the fixed order of the [include order](#include-order) table. They are **not self-contained**: each one uses what the files before it define, and a few functions are forward-declared (listed in the entry that declares them). `tests/golden_render_test.cpp` and `tests/lut_pane_test.cpp` compile `main.cpp` itself, so they pick these files up through it.
-- **What is left in `main.cpp`:** the program's includes, `int main()` and nothing else. `main()` creates the window, wires every worker's notify callback to `LiteUI::wake`, calls `installShortcuts`, assembles the pieces of the [window shell](#window-shell-shell) in order, runs the event loop and shuts the workers down.
+- **What is left in `main.cpp`:** the program's includes, `int main()` and nothing else. `main()` creates the window, wires one notify callback for every worker (`workers().setNotify`) to `LiteUI::wake`, calls `installShortcuts`, assembles the pieces of the [window shell](#window-shell-shell) in order, runs the event loop, flushes the open picture's sidecar and calls `workers().shutdown()`.
 - **Two shared objects.** `state` (`EditorState`, [editor_state.hpp](#editor_statehpp)) is the editor's model: the picture at every stage, the edits (`state.adjust`), the view, the filmstrip, the crop and mask tool state. `uiState` (`UiState`, [ui_state.hpp](#ui_statehpp)) is the UI-only part: selected tabs, list selections, clipboards. Almost every file reads and writes them, so the **Depends on** lines below leave out `editor_state.hpp`, `ui_state.hpp` and `constants.hpp`.
 - **Pane code is built once.** The view tree is created at startup. A pane is always in the tree and shows itself only while its activity is selected, through style and label lambdas that LiteUI re-evaluates after every event; lists (masks, presets, LUTs, snapshots, history) are a fixed number of row slots that each show themselves only for an index that exists. Nothing rebuilds views at run time.
 
 ## Threads
 
-Only these run off the UI thread, and each is a `LatestWorker` (one lazily started thread; a new request supersedes an older one; the finished result is parked until the UI thread collects it): `renderWorker` (`render_worker.hpp`), `geometryWorker` (`geometry_worker.hpp`), `decodeWorker` (`decode.hpp`), `segmentWorker` (`segmentation.hpp`), `syncWorker` (`sync.hpp`), `exportWorker` (`export.hpp`), `thumbWorker` (`filmstrip.hpp`) and `lutPreviewWorker` (`lut_pane.hpp`). Functions marked **Worker thread only** in the entries are the only code that runs there; they must not read or write `state` or `uiState` and must not call LiteUI except `wake()`. A worker announces a result by waking the event loop; the loop then polls, and every `collect...` function (`collectFullRender`, `collectGeometryJob`, `collectDecodeJob`, `collectSegmentJob`, `collectSyncJob`, `collectExportJob`, plus `pollLutPreviews` and `collectThumbJobs`) takes the result in on the UI thread. They are all called from one place, `flushPendingAdjust()` ([auto_tone_hist.hpp](#auto_tone_histhpp)), which is itself polled once per frame by the main canvas and the histogram canvas.
+Only the eight workers below run off the UI thread. Each is a `LatestWorker` (one lazily started thread; a new request supersedes an older one; the finished result is parked until the UI thread collects it), except `thumb` and `exporter`, which are first-in-first-out queues (see [headers.md](headers.md)). **All of them are owned by one `Workers` object, `workers()`, in [`workers.hpp`](#workershpp)**; the job each one runs (the pure, testable part: input and result types, the job function) is an engine header in `workers/`, and the `app/` header named here holds only the UI-thread glue that reads and writes `state`:
+
+| Worker | Job (engine) | UI-thread glue | Taken in by |
+|---|---|---|---|
+| `workers().render` | `render_job.hpp` | `render_update.hpp` | `collectFullRender` |
+| `workers().geometry` | `geometry_job.hpp` | `geometry_worker.hpp` | `collectGeometryJob` |
+| `workers().decode` | `decode_job.hpp` | `filmstrip.hpp` (submits), `meta_commands.hpp` (adopts) | `collectDecodeJob` |
+| `workers().segment` (borrows `workers().sam`) | `segment_job.hpp` | `segmentation.hpp` | `collectSegmentJob` |
+| `workers().sync` | `sync_job.hpp` | `sync.hpp` | `collectSyncJob` |
+| `workers().exporter` | `export_worker.hpp` | `export.hpp` | `collectExportJob` |
+| `workers().thumb` | `thumb_worker.hpp` | `filmstrip.hpp` | `collectThumbJobs` |
+| `workers().lutPreview` | `lut_preview_worker.hpp` | `lut_pane.hpp` | `pollLutPreviews` |
+
+The functions in the engine's job headers are the only code that runs on a worker thread; they must not read or write `state` or `uiState` and must not call LiteUI except `wake()`. A worker announces a result by waking the event loop; the loop then polls, and every function in the last column takes the result in on the UI thread. They are all called from one place, `flushPendingAdjust()` ([auto_tone_hist.hpp](#auto_tone_histhpp)), which is itself polled once per frame by the main canvas and the histogram canvas.
 
 ## Words used throughout
 
@@ -29,9 +42,9 @@ Each entry follows [headers.md](headers.md): a short description, a **Depends on
 
 ## Contents
 
-- **Foundations**: [`constants.hpp`](#constantshpp), [`render_worker.hpp`](#render_workerhpp), [`editor_state.hpp`](#editor_statehpp), [`ui_state.hpp`](#ui_statehpp), [`canvas_view.hpp`](#canvas_viewhpp), [`render_update.hpp`](#render_updatehpp)
+- **Foundations**: [`constants.hpp`](#constantshpp), [`workers.hpp`](#workershpp), [`editor_state.hpp`](#editor_statehpp), [`ui_state.hpp`](#ui_statehpp), [`canvas_view.hpp`](#canvas_viewhpp), [`render_update.hpp`](#render_updatehpp)
 - **Crop, geometry and rotation**: [`crop.hpp`](#crophpp), [`geometry_worker.hpp`](#geometry_workerhpp), [`crop_tool.hpp`](#crop_toolhpp), [`rotate.hpp`](#rotatehpp)
-- **Opening, segmentation and saving**: [`decode.hpp`](#decodehpp), [`segmentation.hpp`](#segmentationhpp), [`saved_edits.hpp`](#saved_editshpp)
+- **Segmentation and saving**: [`segmentation.hpp`](#segmentationhpp), [`saved_edits.hpp`](#saved_editshpp)
 - **LUTs, Sync Settings and batch export**: [`lut_pane.hpp`](#lut_panehpp), [`sync.hpp`](#synchpp), [`export.hpp`](#exporthpp)
 - **Filmstrip and per-picture commands**: [`filmstrip.hpp`](#filmstriphpp), [`meta_commands.hpp`](#meta_commandshpp)
 - **Widgets and colour controls**: [`widgets.hpp`](#widgetshpp), [`color_ui.hpp`](#color_uihpp)
@@ -263,41 +276,46 @@ Status bar.
 
 **`static Color mixBandColor(size_t band)`**: **Input:** a Color Mixer band index `0..kMixBandCount-1` (`kMixBandCount` is in `color_mix.hpp`). **Returns:** the swatch shown on that band's tab and slider, in order red, orange, yellow, green, aqua, blue, purple, magenta. UI only; the math is in `color_mix.hpp`. No bounds check: an out-of-range band reads past the array.
 
-### `render_worker.hpp`
-The background render worker for the full-resolution pixel pass, so releasing a slider on a 24-megapixel photo doesn't freeze the window. The thread, the "latest wins" generation protocol and the parking slot are all in the engine's `latest_worker.hpp` (`LatestWorker`, tested on its own); this file only defines the rendering job and instantiates the worker. It is the one fenced file whose `// BEGIN renderworker` / `// END renderworker` markers are kept.
+### `workers.hpp`
+Every background worker of the editor, owned in one place. Before this, each worker was a `static` object defined in its own app header. A `static` in a header is one object **per translation unit**: the day a second `.cpp` included one of them it would have got its own copy, with its own thread, its own queue and its own "busy" answer. It only worked because `main.cpp` includes everything (one TU). Now there is exactly one `Workers`, created by `workers()`, and the job types and job functions (the part that is pure and testable) live in the engine's `workers/*.hpp` ([headers.md](headers.md#background-work)). It replaces `render_worker.hpp` and `decode.hpp` (both gone) and the worker objects that used to sit in `geometry_worker.hpp`, `segmentation.hpp`, `sync.hpp`, `export.hpp`, `lut_pane.hpp` and `filmstrip.hpp`; their UI-thread glue stays in those files. It is included before `editor_state.hpp` because `EditorState::showPreview()` asks the render worker.
 
-**Depends on:** engine: `image16.hpp`, `latest_worker.hpp`, `render_core.hpp`, `render_params.hpp`. **Test:** the worker protocol is the engine's `LatestWorker`, tested in `tests/cases/latest_worker.inc`; this file's own code has no case of its own. It is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
+**Depends on:** engine: `decode_job.hpp`, `export_worker.hpp`, `geometry_job.hpp`, `lut_preview_worker.hpp`, `render_job.hpp`, `segment_job.hpp`, `sync_job.hpp`, `thumb_worker.hpp`, `image_meta.hpp` (`exifOrientationOf`). **Test:** no case of its own in `tests/cases/` (the jobs and `LatestWorker` are engine code); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`. **Thread model:** every worker is driven from the UI thread only (see each worker's header); the notify callback is the one thing that crosses threads.
 
 **Types**
 
-- `using RenderWorker = LatestWorker<RenderJob, RenderResult>`: `LatestWorker<RenderJob, RenderResult>`. The `src` of a submitted job must never be modified afterwards: the editor's source images are replaced, never edited in place.
-- `struct RenderJob`: One render request: the immutable 8-bit source, the `RenderParams` to apply, and optionally the 16-bit twin of the source.
+- `struct Workers` (non-copyable: it holds threads, mutexes and a `this` capture). Members, in declaration order:
 
-  | Field | Type | Default | Meaning |
+  | Member | Type | Built from | Notes |
   |---|---|---|---|
-  | `src` | `std::shared_ptr<const CanvasImage>` |  |  |
-  | `params` | `RenderParams` |  |  |
-  | `src16` | `std::shared_ptr<const Image16>` |  | The 16-bit twin of `src` (EditorState::source16), if the picture has one: the render starts from it and reads it for the neighbor effects too; `src` is then only its 8-bit view (what the tools measure). |
+  | `sam` | `SamEngine` | | The segmentation engine, **declared first** because `segment` borrows it. |
+  | `render` | `RenderWorker` | `runRenderJob` | |
+  | `geometry` | `GeometryWorker` | `runGeometryJob` | |
+  | `decode` | `DecodeWorker` | `runDecodeJob` | Also remembers the pending path (`pendingPath()`). |
+  | `segment` | `SegmentWorker` | a lambda calling `runSegmentJob(sam, req, c)` | The one place the engine is bound to the job. |
+  | `sync` | `SyncWorker` | `runSyncJob` | Also does the batch rating. |
+  | `exporter` | `ExportWorker` | its default function (`exportPicture`) | |
+  | `thumb` | `ThumbWorker` | a function calling `exifOrientationOf(path)` | Thumbnails are turned upright with the editor's own EXIF reader. |
+  | `lutPreview` | `LutPreviewWorker` | | |
 
-- `struct RenderResult`: The finished, display-ready image.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `image` | `std::shared_ptr<CanvasImage>` |  |  |
-
+  **Member order matters.** Members are destroyed in reverse order and a worker's destructor joins its thread, so `sam` (declared first) outlives the segment worker that borrows it. Anything the notify callback captures (the LiteUI window) must outlive these threads: call `shutdown()` before it goes away.
+  - `void setNotify(const std::function<void()> &wake)`: one callback for all eight workers; a finished job wakes the (otherwise sleeping) event loop. Safe to call at any time (each worker copies it under its own lock); normally once at startup (`main()` passes `ui.wake()`).
+  - `void shutdown()`: stops and joins every worker thread, in this order: `render` (abandons the render in flight), `geometry` (ditto), `decode` (**waits out a decode still running**, which can't be cancelled), `thumb`, `segment`, `sync` (**finishes the batch it is writing**), `exporter` (abandons the picture it is rendering), `lutPreview`. After it no notify callback runs again. Idempotent; the destructor calls it too.
 
 **State and tables**
 
-- `renderWorker`: `static RenderWorker`, initially `{runRenderJob}`
+- The one instance is a function-local static inside `workers()`.
+- **Transitional aliases**: `renderWorker`, `geometryWorker`, `decodeWorker`, `segmentWorker`, `syncWorker`, `exportWorker`, `thumbWorker`, `lutPreviewWorker`, each an `inline` reference into the one `Workers` (so `exportWorker` is `workers().exporter`), kept so code that has not been migrated keeps compiling. New code uses `workers().render` and friends; each alias is to be deleted when its last use is gone.
 
 **Functions**
 
-**`static std::optional<RenderResult> runRenderJob(RenderJob &&job, WorkerCancel c)`**: **Worker thread only.** Runs one `RenderJob`: from the 16-bit twin with `renderToDisplay` when `job.src16` is set, otherwise `renderWith` on the 8-bit `job.src`. Both poll `c.latest` / `c.gen`, so a superseded render abandons itself within milliseconds. **Returns** `std::nullopt` if it was abandoned part-way (nothing is parked or announced), otherwise a `RenderResult` holding the finished image. Touches no `state` and no LiteUI call.
+**`inline Workers &workers()`**: the one `Workers` of the program, created on first use (thread-safe). This is the "step 1" shape: `state` is still a global too. The plan is to move both into an `App` that `main()` owns and passes down, after which this accessor goes away.
+
+**`inline std::string getSegInfo()`**: the segmentation engine's label for the Object panel (`workers().sam.info()`); any thread. It replaces the old mutex-guarded `gSegInfo` global.
 
 ### `editor_state.hpp`
 The editor's one big mutable model, `EditorState`, and its single instance `state` (declared at the end of the file), plus the small state structs it holds: the live crop selection (`CropUi`), the mask-overlay drag and caches (`MaskUi`), the filmstrip (`FilmEntry`, `FilmStrip`) and the Before / After mode (`CompareMode`). It also holds the status-bar message helpers and the one function that sets the zoom. Everything here is **UI thread only**; no worker may read or write it (see [threading.md](threading.md)). Edits themselves are not stored as loose fields: they live in `state.adjust` (an `AdjustmentSet`, so they are undoable). The picture goes through a chain of stages, each kept so that tools and drags don't have to recompute earlier ones: `original` (decoded) → `oriented` (rotated / flipped) → `rotated` (straightened) → `source` (committed crop applied; what adjustments are run on) → `image` (adjustments applied; what is drawn and exported). A 16-bit PNG also keeps a 16-bit twin of each stage.
 
-**Depends on:** `render_worker.hpp`, `masks.hpp` (defined later); engine: `color_tag.hpp`, `exif.hpp`, `geometry.hpp`, `histogram.hpp`, `image16.hpp`, `mask.hpp`, `mask_brush.hpp`, `mask_object.hpp`, `mask_polygon.hpp`, `mask_range.hpp`, `photo_meta.hpp`, `scopes.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
+**Depends on:** `workers.hpp`, `masks.hpp` (defined later); engine: `color_tag.hpp`, `exif.hpp`, `geometry.hpp`, `histogram.hpp`, `image16.hpp`, `mask.hpp`, `mask_brush.hpp`, `mask_object.hpp`, `mask_polygon.hpp`, `mask_range.hpp`, `photo_meta.hpp`, `scopes.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Reading guide for `EditorState`**
 - **Picture stages:** `original`, `oriented` (+`orientedFor`, `orientedPreview`), `rotated` (+`rotatedAngle`, `rotatedExpand`), `source` (+`sourceCrop`), `image`; the 16-bit twins `original16`, `oriented16`, `rotated16`, `source16`.
@@ -523,7 +541,7 @@ Selection-drag "handle" bitmask: which edges of the selection a drag is moving. 
   | `hoverB` | `uint8_t` | `0` |  |
   | `wbPicking` | `bool` | `false` | White-balance picker (a button in the Adjust pane, key W). While armed, one click on the picture sets Temperature and Tint so that spot turns gray. Read it through wbPickerActive(), which also drops it when it no longer applies. |
 
-  - `bool showPreview() const`: True while `previewImage` stands in for `image`: during a drag, and after it until the background full-resolution render lands (renderWorker).
+  - `bool showPreview() const`: True while `previewImage` stands in for `image`: during a drag, and after it until the background full-resolution render lands (`workers().render`).
   - `bool previewDocActive() const`: True while an angle drag is showing its low-res preview: `dragging`, a `previewImage` exists and `previewDocW > 0`.
   - `float docWidth() const`: Document width in image pixels: the preview override while `previewDocActive()`, else `image->width`, else `kPlaceholderW` before anything is open.
   - `float docHeight() const`: Document height in image pixels, with the same three-way rule as `docWidth()` (`kPlaceholderH` as the fallback).
@@ -750,15 +768,15 @@ The canvas view: where the picture sits inside the canvas and how the user moves
 **`static void paintViewBars(CanvasContext &ctx, const ViewGeo &g)`**: **Inputs:** the canvas context and the `ViewGeo` for this frame. Draws a track and a rounded thumb for each visible scrollbar, and the small corner square where both are visible.
 
 ### `render_update.hpp`
-Keeps `state.image` (what is drawn and exported) up to date with `state.adjust`. Two paths: a **deferred** one for large pictures (show a cheap preview at once, let `renderWorker` produce the full-resolution result in the background) and a **synchronous** one for everything else. The worker announces a finished result by waking the event loop (`RenderWorker`'s notify callback is wired to `LiteUI::wake` in `main()`), the loop polls the canvases, and `collectFullRender()` picks the result up from there. While no render is outstanding nothing runs, so an idle editor costs nothing.
+Keeps `state.image` (what is drawn and exported) up to date with `state.adjust`. Two paths: a **deferred** one for large pictures (show a cheap preview at once, let `workers().render` produce the full-resolution result in the background; the job itself, `RenderJob` and `runRenderJob`, is the engine's [`render_job.hpp`](headers.md#render_jobhpp)) and a **synchronous** one for everything else. The worker announces a finished result by waking the event loop (`workers().setNotify` is wired to `LiteUI::wake` in `main()`), the loop polls the canvases, and `collectFullRender()` picks the result up from there. While no render is outstanding nothing runs, so an idle editor costs nothing.
 
-**Depends on:** `render_worker.hpp`, `crop.hpp` (defined later), `geometry_worker.hpp` (defined later); engine: `adjustment_set.hpp`, `latest_worker.hpp`, `raster_ops.hpp`, `render.hpp`, `render_core.hpp`, `thumb_worker.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
+**Depends on:** `workers.hpp`, `crop.hpp` (defined later), `geometry_worker.hpp` (defined later); engine: `adjustment_set.hpp`, `latest_worker.hpp`, `raster_ops.hpp`, `render.hpp`, `render_core.hpp`, `render_job.hpp` (`RenderJob`), `thumb_worker.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Functions**
 
 **`static void adoptFullRender(RenderWorker::Result &&r)`**: **Input:** the worker's `RenderWorker::Result`. Makes its image `state.image`, drops the stand-in `previewImage`, marks the histogram stale and the canvas dirty.
 
-**`static void collectFullRender()`**: Non-blocking: asks `renderWorker.collect()` for a finished, still-current result and adopts it. Polled once per frame from `flushPendingAdjust`. Nothing here catches: `runRenderJob` does not catch either, so if a render job throws, `collect()` rethrows it on the UI thread from this function.
+**`static void collectFullRender()`**: Non-blocking: asks `workers().render.collect()` for a finished, still-current result and adopts it. Polled once per frame from `flushPendingAdjust`. If the render job threw, `collect()` rethrows it here and this catches a `std::exception`, showing "Render failed: <reason>" as an error in the status bar (a non-`std::exception` throw is not caught here).
 
 **`static void finishFullRender()`**: Blocking: if a render is outstanding, waits for it (`waitForLatest`) and acts on its `WaitStatus`, so `state.image` is current when it returns. For the few callers that need the real pixels *now* (export). Returns at once when nothing is outstanding.
 - `completed`: adopts the image (`adoptFullRender`); a `completed` status with no value throws `std::logic_error`.
@@ -771,7 +789,7 @@ Keeps `state.image` (what is drawn and exported) up to date with `state.adjust`.
 Rebuilds `state.image` from the untouched `state.source` pixels with the current adjustment values. Called after every change to `state.adjust`: a slider drag, undo, redo, a crop, opening a picture.
 - Does nothing until a picture is open. Clears the status message and `colorNoticePending`, and invalidates any render in flight.
 - **Geometry on the worker:** on a large picture (`isLargeImage`) with a pending orient / straighten / crop change (`geometryDirty()`), it calls `submitGeometryJob()` and returns; the current picture stays on screen until the geometry bundle lands (see `geometry_worker.hpp`).
-- Otherwise `syncSource(false)` picks up a crop change from apply / undo / redo. If `source` did not change, a preview base exists and `image` still has the source's size, it takes the **deferred path**: render the preview now (`updatePreviewFromAdjustments`) so the picture updates immediately, and `renderWorker.submit(RenderJob{source, buildRenderParams(), source16})` for the full-resolution result. `paintCanvas` keeps showing the preview (`EditorState::showPreview`) until it arrives.
+- Otherwise `syncSource(false)` picks up a crop change from apply / undo / redo. If `source` did not change, a preview base exists and `image` still has the source's size, it takes the **deferred path**: render the preview now (`updatePreviewFromAdjustments`) so the picture updates immediately, and `workers().render.submit(RenderJob{source, buildRenderParams(), source16})` for the full-resolution result. `paintCanvas` keeps showing the preview (`EditorState::showPreview`) until it arrives.
 - Otherwise the **synchronous path**: render into `state.image` now (from the 16-bit twin with `renderToDisplay`, else `renderAdjusted`), drop the preview and the preview document size, mark the histogram stale and the canvas dirty. Used for small pictures, where the pass is faster than the hand-off, and for any change that alters the picture's geometry, because then `source`, `image`, the document size and the crop selection must all change together.
 
 **`static void updatePreviewFromAdjustments()`**: Like `updateImageFromAdjustments()` but applied to the small preview base (from its 16-bit twin if there is one). Only touches `state.previewImage` (and marks the histogram stale and the canvas dirty); `state.image`, the document size, export and the info labels are left alone until the drag ends. No-op when there is no preview base (a small picture just uses the full path).
@@ -804,58 +822,11 @@ The crop selection helpers, all on `state.crop` (the live selection) and `state.
 Returns early without changing anything when nothing is out of date (and `force` is false).
 
 ### `geometry_worker.hpp`
-The background **geometry worker**: it runs the whole orient → straighten → crop → render pipeline off the UI thread for a large photo, so tapping Rotate or Straighten's nudge buttons on a 24-megapixel picture doesn't freeze the window. Same thread model and cancellation contract as `RenderWorker` (one lazily started thread, a generation number supersedes stale work, the running job polls it and abandons within a few scanlines). The difference: a render job can start from `state.source`, but a geometry job may be *changing* the source, so it always rebuilds the whole chain from `original`. That wastes a little work when only the crop changed after a straighten, but keeps a job a pure function of its inputs. Holds the UI-thread glue too: the dirty test, submit, adopt, collect and finish functions, and `geometryBusy()`. The `// BEGIN geometryworker` / `// END geometryworker` fence covers the worker proper.
+The UI-thread glue of the geometry worker. The job (`GeometryJob`, `GeometryBundle`, `runGeometryJob`) is pure and lives in the engine's `workers/geometry_job.hpp` ([headers.md](headers.md#geometry_jobhpp)): it runs the whole orient → straighten → crop → render pipeline off the UI thread for a large photo, so tapping Rotate or Straighten's nudge buttons on a 24-megapixel picture doesn't freeze the window, and it always rebuilds the whole chain from `original` (that file says why). The worker object is `workers().geometry` ([workers.hpp](#workershpp)). What is left here reads and writes `state`: deciding whether a rebuild is needed, submitting it, and adopting the finished bundle as one atomic swap, plus the blocking `finishGeometryJob()` and `geometryBusy()`. The file includes `workers/geometry_job.hpp` itself.
 
-**Depends on:** `crop.hpp`, `saved_edits.hpp` (defined later); engine: `adjustment_set.hpp`, `geometry.hpp`, `image16.hpp`, `latest_worker.hpp`, `raster_ops.hpp`, `render_core.hpp`, `render_params.hpp`, `thumb_worker.hpp`, `wide_chain.hpp`. **Test:** the worker protocol is the engine's `LatestWorker`, tested in `tests/cases/latest_worker.inc`; this file's own code has no case of its own. It is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
-
-**Types**
-
-- `using GeometryWorker = LatestWorker<GeometryJob, GeometryResult>`: `LatestWorker<GeometryJob, GeometryResult>`.
-- `struct GeometryBundle`: Exactly the geometry-derived `EditorState` fields (`oriented`, `rotated`, `source`, `previewBase`, the 16-bit twins, `image`, ...), adopted as one atomic swap on the UI thread (see `adoptGeometryBundle`) so the picture, its document size and the crop selection always change together.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `oriented` | `std::shared_ptr<CanvasImage>` |  |  |
-  | `orientedFor` | `Orient` |  |  |
-  | `orientedPreview` | `std::shared_ptr<CanvasImage>` |  |  |
-  | `rotated` | `std::shared_ptr<CanvasImage>` |  |  |
-  | `rotatedAngle` | `float` | `0.0f` |  |
-  | `rotatedExpand` | `bool` | `false` |  |
-  | `source` | `std::shared_ptr<CanvasImage>` |  |  |
-  | `sourceCrop` | `CropRect` |  |  |
-  | `previewBase` | `std::shared_ptr<CanvasImage>` |  |  |
-  | `previewBase16` | `std::shared_ptr<Image16>` |  | the 16-bit twin of previewBase (null for an 8-bit file or a small picture) |
-  | `image` | `std::shared_ptr<CanvasImage>` |  |  |
-  | `oriented16` | `std::shared_ptr<Image16>` |  | the 16-bit twin (null for an 8-bit file) |
-  | `rotated16` | `std::shared_ptr<Image16>` |  |  |
-  | `source16` | `std::shared_ptr<Image16>` |  |  |
-
-- `struct GeometryResult`: What the worker returns: one `GeometryBundle`.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `bundle` | `GeometryBundle` |  |  |
-
-- `struct GeometryJob`: One request: a snapshot of everything the pipeline needs (`original`, orientation, angle, corner mode, crop, `RenderParams`, and the 16-bit original if any). `original` is not `const` only because the pipeline's functions take the same `shared_ptr<CanvasImage>` type `state.original` is; it must never be modified (images are replaced, never edited in place).
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `original` | `std::shared_ptr<CanvasImage>` |  | Non-const, unlike RenderJob::src: orientImage (identity case) and the rest of this pipeline are written in terms of the same shared_ptr<CanvasImage> type `state.original` already is, so this just carries that type through - never a license to mutate it. |
-  | `orient` | `Orient` |  |  |
-  | `angle` | `float` | `0.0f` |  |
-  | `expand` | `bool` | `false` |  |
-  | `crop` | `CropRect` |  |  |
-  | `renderParams` | `RenderParams` |  |  |
-  | `original16` | `std::shared_ptr<Image16>` |  | the 16-bit twin of `original`, if the picture has one |
-
-
-**State and tables**
-
-- `geometryWorker`: `static GeometryWorker`, initially `{runGeometryJob}`
+**Depends on:** `workers.hpp`, `crop.hpp`, `saved_edits.hpp` (defined later); engine: `geometry_job.hpp` (`GeometryJob`, `GeometryBundle`), `adjustment_set.hpp`, `geometry.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Functions**
-
-**`static std::optional<GeometryResult> runGeometryJob(GeometryJob &&job, WorkerCancel c)`**: **Worker thread only.** The whole chain from `job.original`, checking `c.cancelled()` between every stage and by row / block inside the two per-pixel passes (`rotateArbitrary`, `renderWith`), so a superseded job abandons within milliseconds. In order: `orientImage` (identity: no copy), the orientation preview base, `rotateArbitrary` at the job's angle (skipped at 0), the crop, the 16-bit twin chain (`wide_chain::oriented` / `rotated` / `cropped`) when there is one, `makePreviewBase` for the 8-bit and 16-bit sources, and finally the render of `image` (from the 16-bit twin with `renderToDisplay` if present, else `renderWith`). **Returns** `std::nullopt` if abandoned at any point, else the finished `GeometryBundle`.
 
 **`static bool geometryDirty()`**: True when the committed orientation / angle / corner mode / crop in `state.adjust` hasn't been rendered into `state.oriented` / `rotated` / `source` yet. Mirrors `syncSource`'s own dirty checks as a read-only predicate (no rebuilding). Also true while a geometry job is outstanding or while `oriented` / `rotated` are missing; checking both directly means a bug elsewhere fails safe (one wasted resubmit) instead of adopting a stale in-flight job.
 
@@ -867,13 +838,7 @@ The background **geometry worker**: it runs the whole orient → straighten → 
 
 **`static void finishGeometryJob()`**: Blocking: makes every field a geometry rebuild touches current. For the one place that needs the real pixels *now* (export). Returns at once when nothing is outstanding; otherwise it `waitForLatest()`s and acts on the `WaitStatus`: `completed` adopts the bundle (a missing value throws `std::logic_error`); `cancelled` adopts nothing, so no geometry field is updated half-way, and **throws** `std::runtime_error("Geometry rebuild was cancelled before completion")`; `failed` rethrows the job's exception (or throws `std::runtime_error` if there is none).
 
-**`static bool geometryBusy()`**: True while a crop / rotate / flip / straighten rebuild is still running (`geometryWorker.outstanding()`). Until it lands, `state.rotated` / `state.source` / the crop selection describe the *previous* geometry while `state.adjust` already holds the new one, so any edit that measures against them (a second rotate remapping the crop rect, Apply Crop reading the selection) would use stale sizes. Those edits are ignored while this is true, and their buttons are dimmed to match.
-
-**`static void collectGeometryJob()`**: Non-blocking: adopts a finished, still-current geometry result if there is one. Polled once per frame from `flushPendingAdjust`, alongside `collectFullRender`.
-
-**`static void finishGeometryJob()`**: Blocking: waits for an outstanding geometry job and adopts it, so every field a geometry rebuild touches is current. For the one place that needs the real pixels *now* (export).
-
-**`static bool geometryBusy()`**: True while a crop / rotate / flip / straighten rebuild is still running. Until it lands, `state.rotated`, `state.source` and the crop selection describe the previous geometry while `state.adjust` already holds the new one, so any edit that measures against them would compute from stale sizes. Such edits (`applyGeoOp`, `resetOrientation`, `applyCrop`, `removeCrop`) return at once while this is true, and their buttons are dimmed.
+**`static bool geometryBusy()`**: True while a crop / rotate / flip / straighten rebuild is still running (`workers().geometry.outstanding()`). Until it lands, `state.rotated` / `state.source` / the crop selection describe the *previous* geometry while `state.adjust` already holds the new one, so any edit that measures against them (a second rotate remapping the crop rect, Apply Crop reading the selection) would use stale sizes. Those edits are ignored while this is true, and their buttons are dimmed to match.
 
 ### `crop_tool.hpp`
 The Crop tool's pointer logic and its two commands. Hit-testing which handle is under the pointer, dragging out / moving / resizing the selection (honoring the aspect lock and the image bounds), and Apply / Remove Crop, each one undo step. Coordinates passed to the handlers are canvas-local screen pixels; dividing by `state.zoom` gives image pixels.
@@ -921,81 +886,12 @@ Rotate / flip (the 90-degree steps) and the Straighten angle, each as an undo st
 
 **`static void redo()`**: Redoes one step; same follow-up as `undo()`.
 
-## Opening, segmentation and saving
-
-### `decode.hpp`
-Opening a file without freezing the window. Decoding a big PNG or JPEG takes long enough to be noticed, so it runs on its own thread (`DecodeWorker`, a `LatestWorker` plus the bookkeeping of which path is being decoded). Same contract as the render and geometry workers: `submit()` supersedes any earlier request, the finished result is parked until the UI thread `collect()`s it, and the notify callback wakes the sleeping event loop. Until the result lands the previously open picture stays fully usable; nothing about the editor changes until `adoptDecoded()` (`meta_commands.hpp`) swaps the new file in. A decode that **throws** (`std::bad_alloc` on a huge picture, a library exception on a corrupt one) must not become an exception on the UI thread (`LatestWorker` would park it and rethrow it from `collect()`, where the open-file code expects an ordinary "couldn't open it"), so the job catches it and reports it as an empty `image` plus `error`; the previously open picture stays open. A decode already running can't be interrupted (the image libraries have no cancel hook), so opening a second file queues behind it and the first file's result is dropped when it finishes.
-
-**Depends on:** engine: `image16.hpp`, `image_meta.hpp`, `latest_worker.hpp`, `virtual_copy.hpp`. **Test:** the worker protocol is the engine's `LatestWorker`, tested in `tests/cases/latest_worker.inc`; this file's own code has no case of its own. It is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
-
-**Types**
-
-- `struct DecodeJob`: The path to open (a virtual copy's `photo.jpg|vc2` form is accepted).
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `path` | `std::string` |  |  |
-
-- `struct DecodeResult`: What a decode produced: the path, the 8-bit image (empty on failure; for a 16-bit file its 8-bit form), the library's error text, and `wide`, the full-precision 16-bit data (null for every other file).
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `path` | `std::string` |  |  |
-  | `image` | `std::optional<CanvasImage>` |  | empty on failure (for a 16-bit file: its 8-bit form) |
-  | `error` | `std::string` |  | library message when image is empty |
-  | `wide` | `std::shared_ptr<Image16>` |  | a 16-bit PNG at full precision (upright); null for every other file |
-
-- `class DecodeWorker`: `LatestWorker<DecodeJob, DecodeResult>` plus the UI-thread bookkeeping of which file is being decoded.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `pendingPath_` | `std::string` |  | UI thread only |
-
-  - `DecodeWorker() : LatestWorker<DecodeJob, DecodeResult>(runDecodeJob)`: Constructor: passes `runDecodeJob` to `LatestWorker`.
-  - `void submit(std::string path)`: Remembers `path` as the pending path and submits a `DecodeJob`, superseding any earlier request.
-  - `const std::string &pendingPath() const`: The file the newest request is decoding (UI thread; valid while outstanding()).
-
-**State and tables**
-
-- `decodeWorker`: `static DecodeWorker`
-
-**Functions**
-
-**`static std::optional<DecodeResult> runDecodeJob(DecodeJob &&job, WorkerCancel)`**: **Worker thread only.** Always returns a value, and never throws: a failure is an empty `image` plus an `error` string, because a decode can't be cancelled part-way. Everything runs inside a `try`: `std::bad_alloc` gives *"not enough memory to open this picture"*, any other `std::exception` gives its `what()` (*"unexpected error"* if that is empty), anything else gives *"unexpected error"*; `image` and `wide` are reset in each case. A file that opens but holds no picture with no message gives *"couldn't open it"*. Decodes `vcImageOf(path)` (a virtual copy decodes its parent picture) with `image_source::openUpright`, which applies the camera's EXIF rotation once, so the picture is upright everywhere afterwards (editor, masks, saved edits, export). A 16-bit PNG is read at full precision into `wide`; its 8-bit form (what the tools measure) is made from it.
+## Segmentation and saving
 
 ### `segmentation.hpp`
-Object segmentation for the Masks pane's Object tool, run in the background. The engine is MobileSAM (an ONNX encoder and decoder) when the model files can be loaded, with the colour-grow wand of the engine's `seg_basic.hpp` as the fallback. Holds the request / result types, `SegmentWorker`, the engine-info string the Object panel shows (the one global that a worker thread writes and the UI thread reads, behind a mutex), model-folder lookup, `segmentObject()` itself (worker thread only) and the UI-thread functions that take a finished result and put it into the mask as one undo step. Also ends with three forward declarations of filmstrip functions that the code after this file needs (see the note on that list).
+The UI-thread glue of object segmentation, for the Masks pane's Object tool. The engine (MobileSAM through ONNX, with the colour-grow wand as the fallback) and the job (`SamEngine`, `SegmentRequest`, `SegmentResult`, `runSegmentJob`, `samModelDir`) are pure and live in the engine's `workers/segment_job.hpp` ([headers.md](headers.md#segment_jobhpp)). The worker object is `workers().segment` and the engine it borrows is `workers().sam`; the engine's label for the Object panel is `getSegInfo()` ([workers.hpp](#workershpp)). What is left here commits a finished segmentation into `state`, and ends with three forward declarations of filmstrip functions that the code after this file needs (see the note on that list).
 
-**Depends on:** `filmstrip.hpp` (defined later); engine: `adjustment_set.hpp`, `latest_worker.hpp`, `mask_object.hpp`, `photo_meta.hpp`, `sam_segmenter.hpp`, `seg_basic.hpp`, `thumb_worker.hpp`. **Test:** the worker protocol is the engine's `LatestWorker`, tested in `tests/cases/latest_worker.inc`; this file's own code has no case of its own. It is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
-
-**Types**
-
-- `using SegmentWorker = LatestWorker<SegmentRequest, SegmentResult>`: `LatestWorker<SegmentRequest, SegmentResult>`, the same protocol as the render and decode workers.
-- `struct SegmentRequest`: One segmentation request: the untouched original, its key (`state.imageSerial`), the prompts, where the result goes (`maskIdx`, `part`), and `prefetch` (encode only, to warm the model; no result map).
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `image` | `std::shared_ptr<const CanvasImage>` |  | the untouched original |
-  | `imageKey` | `uint64_t` | `0` | state.imageSerial |
-  | `prompts` | `std::vector<ObjectPrompt>` |  | original-picture fractions |
-  | `maskIdx` | `int` | `-1` | where the result goes |
-  | `part` | `int` | `-1` |  |
-  | `prefetch` | `bool` | `false` | encode only (warm the model), no result map |
-
-- `struct SegmentResult`: The request (image dropped; prompts and target kept), the soft map (null on failure) and the error text.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `req` | `SegmentRequest` |  | image dropped; prompts + target kept |
-  | `map` | `std::shared_ptr<const ObjectMap>` |  | null on failure |
-  | `error` | `std::string` |  |  |
-
-
-**State and tables**
-
-- `gSegInfoMutex`: `static std::mutex`. seg_basic.hpp as fallback) ---- Which engine is active, shown in the Object panel (written by the worker, read by the UI thread's label poll).
-- `gSegInfo`: `static std::string`, initially `"Engine: loads on first use"`
-- `segmentWorker`: `static SegmentWorker`, initially `{runSegmentJob}`
+**Depends on:** `workers.hpp`, `filmstrip.hpp` (defined later); engine: `segment_job.hpp` (`SegmentWorker`), `adjustment_set.hpp`, `mask_object.hpp`, `photo_meta.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Forward declarations** (defined in a later file; declared here because this code is written before it)
 
@@ -1007,19 +903,6 @@ These three are filmstrip functions (`filmstrip.hpp`) needed by `adoptDecoded()`
 
 **Functions**
 
-**`static void setSegInfo(std::string s)`**: Replaces the engine-info text under the mutex. Called by the worker when the engine is chosen.
-
-**`static std::string getSegInfo()`**: Returns a copy of the engine-info text under the mutex. Read by the Object panel's label poll on the UI thread. Starts as "Engine: loads on first use".
-
-**`static std::string samModelDir()`**: **Returns** the folder holding `mobile_sam.encoder.onnx` and `mobile_sam.decoder.onnx`: `$LITEROOM_MODELS` if set and non-empty, else a `models` folder next to the executable (found through `GetModuleFileNameW` on Windows, `/proc/self/exe` elsewhere), else the relative path `models`.
-
-**`static std::shared_ptr<const ObjectMap> segmentObject(const CanvasImage &img, uint64_t key, const std::vector<ObjectPrompt> &prompts, std::string *err, const std::atomic<uint64_t> *latest, uint64_t gen)`**
-**Worker thread only.** **Inputs:** the untouched original image, the `key` identifying it (`state.imageSerial`), the click prompts (original-picture fractions, foreground or background), an error out-string, and the cancel pair `latest` / `gen`. **Returns** the soft `ObjectMap`, or null (no error for a prefetch; the text in `*err` on failure).
-- On first use, tries to load the two SAM models from `samModelDir()`. A load that **throws** (the ONNX runtime reports a bad or missing model that way) counts the same as one that returns false, with the reason in the label; otherwise `backend` would stay untried and every later job would retry the load. Success: engine "MobileSAM". Failure: engine "basic color grow (<reason>; looked in <dir>)" and every later call uses `segmentObjectWand`. The engine and the segmenter are function-local statics, so only this one worker thread may call it.
-- With SAM: encodes the image once per `key` (the expensive step; remembered in a local `encodedKey`, which is cleared **before** the encode and set only after it succeeds, because a throw or failure part-way leaves the encoder in an unknown state and a stale key would let the next job for the previous picture skip the encode). With no prompts it stops there: that is the **prefetch** that warms the model when the Object tool is opened. Otherwise it decodes the prompts into mask logits and turns them into 8-bit alpha with a sigmoid (`kSamSoftness` sets the edge softness), tagged with a fresh `nextObjectMapId()`. Abandons (returns null) if superseded while encoding.
-
-**`static std::optional<SegmentResult> runSegmentJob(SegmentRequest &&req, WorkerCancel c)`**: **Worker thread only.** Runs `segmentObject` for one request and returns the `SegmentResult` (request without its image, plus the map or an error). Always returns a value, and never throws: failure is a null `map` and an `error`. A request with no image gives *"no picture to analyze"*; an exception from the segmenter is caught here (`std::bad_alloc` gives *"not enough memory"*, another `std::exception` its `what()`, anything else *"unexpected error"*) and shown by `adoptSegment` as "Object selection failed: ..." ("... unavailable: ..." for a prefetch). Without this, `LatestWorker` would park the exception and rethrow it from `collect()` on the UI thread, where nothing catches it.
-
 **`static void adoptSegment(SegmentWorker::Result &&r)`**: **UI thread.** Takes a finished segmentation. **Prefetch results** just record `state.mask.encodedKey` (or show "Object selection unavailable: <error>"). Otherwise it clears the pending prompts, and on failure shows "Object selection failed". On success it stores the map and the prompts in the target mask part (an `ObjectShape`) with **one** undo step (`adjust.setMasks`), clears the status and asks for a recompute. A result whose mask or part is gone (deleted, undone away) or is no longer an object part is dropped silently.
 
 **`static void collectSegmentJob()`**: Non-blocking: adopts a finished segmentation if there is one. Polled once per frame from `flushPendingAdjust`.
@@ -1027,11 +910,11 @@ These three are filmstrip functions (`filmstrip.hpp`) needed by `adoptDecoded()`
 ### `saved_edits.hpp`
 Saving a picture's edits to its sidecar file, plus the per-picture facts the Info pane and the status bar show (camera data, colour-space tag). A photo's edits live in `photo.jpg.literoom.json` beside it. They are written (to a temp file, then renamed, so a crash can't leave half a file) after any change once no mouse drag is in progress (`autosaveSidecar`, polled every frame from `flushPendingAdjust`), when another picture replaces this one, and when the app closes; and read back when the picture is opened (`loadSidecar()`, which lives in `lut_pane.hpp` because it also restores the LUT reference). A missing file is normal. A damaged one, one from a newer version, or one written for a different-sized picture is ignored (the editor starts clean) and the status bar says so, but it is first copied to `<sidecar>.bak` so the next autosave can't destroy it. A file that exists but can't be opened or read at all sets `state.sidecarBlocked`, and then nothing writes that picture's sidecar until it is opened again (both in `loadSidecar()`). Opening a picture and touching nothing writes nothing. The undo history is not saved, but what is saved is the newest history step (`latestToJson`), so stepping back to "Original" and closing the app keeps the edits above it. The file format is in [sidecar-format.md](sidecar-format.md).
 
-**Depends on:** `filmstrip.hpp` (defined later); engine: `adjustment_set.hpp`, `color_tag.hpp`, `exif.hpp`, `file_utils.hpp`, `image_meta.hpp`, `sidecar.hpp`, `virtual_copy.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
+**Depends on:** `filmstrip.hpp` (defined later); engine: `adjustment_set.hpp`, `color_tag.hpp`, `exif.hpp`, `file_utils.hpp`, `image_meta.hpp`, `sidecar.hpp`, `sidecar_file.hpp` (`sidecarFilePath`), `virtual_copy.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Functions**
 
-**`static std::filesystem::path sidecarPath(const std::string &imagePath)`**: **Input:** a picture path (a virtual copy's `photo.jpg|vcN` form is accepted). **Returns** the path of its sidecar file as a `std::filesystem::path` (`sidecarFileOf`): `photo.jpg.literoom.json` beside the picture; a virtual copy has its own file (see `virtual_copy.hpp`).
+**`static std::filesystem::path sidecarPath(const std::string &imagePath)`**: **Input:** a picture path (a virtual copy's `photo.jpg|vcN` form is accepted). **Returns** the path of its sidecar file as a `std::filesystem::path`: a thin wrapper over the engine's `sidecarFilePath` (`io/sidecar_file.hpp`), the one definition of where a sidecar lives, so `saveSidecar` writes exactly the file `readSidecarFile` reads. `photo.jpg.literoom.json` beside the picture; a virtual copy has its own file (see `virtual_copy.hpp`).
 
 **`static std::string pictureLabel(const std::string &path)`**: A picture's name for messages and the title bar: a virtual copy shows as "photo.jpg [Copy 2]".
 
@@ -1050,9 +933,9 @@ Saving a picture's edits to its sidecar file, plus the per-picture facts the Inf
 ## LUTs, Sync Settings and batch export
 
 ### `lut_pane.hpp`
-The UI side of the LUTs pane: the library's `.cube` files as a list, each with a preview of the open picture under that LUT. The picture's own LUT is part of its edits (`AdjustmentSet::lut()`, with LUT Amount as its strength); everything here is the UI around it. The library and its cache are the engine's `io/lut_library.hpp`; the previews are made by `workers/lut_preview_worker.hpp`. The list and its bookkeeping are the **LUT globals** (`gLuts`, `gLutsLoaded`, `gLutPaintCounter`, `lutPreviewWorker`, `gLutSerial`, `gLutBuilt`, `gLutCacheEpoch`), left out of the `uiState` refactor on purpose, because `tests/lut_pane_test.cpp` drives this pane's functions. The file also holds `loadSidecar()`, which restores a picture's saved edits and re-checks its LUT, because it needs `dropLutCache()` and `noteLutProblem()`.
+The UI side of the LUTs pane: the library's `.cube` files as a list, each with a preview of the open picture under that LUT. The picture's own LUT is part of its edits (`AdjustmentSet::lut()`, with LUT Amount as its strength); everything here is the UI around it. The library and its cache are the engine's `io/lut_library.hpp`; the previews are made by `workers/lut_preview_worker.hpp`, whose one worker is `workers().lutPreview` ([workers.hpp](#workershpp)). The list and its bookkeeping are the **LUT globals** (`gLuts`, `gLutsLoaded`, `gLutPaintCounter`, `gLutSerial`, `gLutBuilt`, `gLutCacheEpoch`), left out of the `uiState` refactor on purpose, because `tests/lut_pane_test.cpp` drives this pane's functions. The file also holds `loadSidecar()`, which restores a picture's saved edits and re-checks its LUT, because it needs `dropLutCache()` and `noteLutProblem()`.
 
-**Depends on:** `saved_edits.hpp`; engine: `adjustment_set.hpp`, `adjustments.hpp`, `lut3d.hpp`, `lut_library.hpp`, `lut_preview_worker.hpp`, `minijson.hpp`, `photo_meta.hpp`, `sidecar.hpp`, `sidecar_file.hpp`. **Test:** `tests/lut_pane_test.cpp` drives this pane's functions (refresh, import, apply, remove, status texts) against a real temporary library (see [headers.md](headers.md)); the file is also compiled into `golden_render_test`.
+**Depends on:** `workers.hpp`, `saved_edits.hpp`; engine: `adjustment_set.hpp`, `adjustments.hpp`, `lut3d.hpp`, `lut_library.hpp`, `lut_preview_worker.hpp`, `minijson.hpp`, `photo_meta.hpp`, `sidecar.hpp`, `sidecar_file.hpp`. **Test:** `tests/lut_pane_test.cpp` drives this pane's functions (refresh, import, apply, remove, status texts) against a real temporary library (see [headers.md](headers.md)); the file is also compiled into `golden_render_test`.
 
 **Types**
 
@@ -1080,7 +963,6 @@ The UI side of the LUTs pane: the library's `.cube` files as a list, each with a
 - `gLuts`: `static std::vector<LutRow>`. The rows of the LUTs list, at most `kLutRows`.
 - `gLutsLoaded`: `static bool`, initially `false`. The folder was listed since the pane was last opened.
 - `gLutPaintCounter`: `static uint64_t`, initially `0`. Counter stamping each row's `paintVersion` whenever its preview or text changes.
-- `lutPreviewWorker`: `static LutPreviewWorker`. The worker that renders the previews (`LutPreviewWorker`, `workers/lut_preview_worker.hpp`).
 - `gLutSerial`: `static uint64_t`, initially `0`. The serial of the batch whose results are taken in; results of an earlier batch are ignored.
 - `gLutBuilt`: `static LutBuilt`. What the current previews were made for.
 - `gLutCacheEpoch`: `static uint64_t`, initially `1`. Bumped when the LUT cache is emptied; `currentLutStatus()` looks up again when it changes.
@@ -1126,51 +1008,11 @@ The UI side of the LUTs pane: the library's `.cube` files as a list, each with a
 On success it adopts the edits, the rating / flag / label and the snapshots, says "Restored saved edits" unless the file only holds a rating, and calls `noteLutProblem()`.
 
 ### `sync.hpp`
-**Sync Settings** and **batch rating**: copying the open picture's look onto the pictures picked in the filmstrip (Ctrl+click, Shift+click). The other pictures are not open, so there is no `AdjustmentSet` to edit: their sidecar files are rewritten directly by the engine's `sidecarSyncLook`, which keeps each picture's own crop, rotation and masks. A picture with no sidecar has to be decoded once to learn its size. All of that runs on a background worker. It is a `LatestWorker` but is never cancelled: a second sync is refused while one runs, and opening pictures waits too, so nobody reads a sidecar that is about to be replaced. The open picture is never in the batch (its edits live in memory and autosave). The same worker does the **batch rating**: when pictures are selected, a rating / flag / colour-label command is applied to the open picture at once and to the others through `metaOnly` jobs that patch only the rating fields (`sidecarPatchMeta`).
+The UI-thread glue of **Sync Settings** and **batch rating**: copying the open picture's look onto the pictures picked in the filmstrip (Ctrl+click, Shift+click), and the same worker's rating / flag / colour-label batches. The job (`SyncJob`, `SyncOutcome`, `SyncResult`, `syncOne`, `runSyncJob`, `writeTextAtomic`) is pure and lives in the engine's `workers/sync_job.hpp` ([headers.md](headers.md#sync_jobhpp)), which also explains how a sync works and how it fails: the other pictures' sidecars are rewritten directly by `sidecarSyncLook` / `sidecarPatchMeta`, each picture is guarded on its own, and a sidecar that can't be read (`readSidecarFile`: empty, too big, unreadable) is skipped and never treated as absent. The worker object is `workers().sync` ([workers.hpp](#workershpp)); it is a `LatestWorker` but is **never cancelled**: a second sync is refused while one runs, and opening pictures waits too, so nobody reads a sidecar that is about to be replaced. The open picture is never in the batch (its edits live in memory and autosave). What is left here touches `state` and the status bar.
 
-**Depends on:** `saved_edits.hpp`, `filmstrip.hpp` (defined later); engine: `adjustment_set.hpp`, `file_utils.hpp`, `image_meta.hpp`, `latest_worker.hpp`, `photo_meta.hpp`, `preset.hpp`, `sidecar.hpp`, `sidecar_file.hpp` (`readSidecarFile`, `SidecarRead`), `virtual_copy.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
-
-**Types**
-
-- `struct SyncJob`: One batch: the pictures to touch, the look to copy (`Preset`), or, with `metaOnly`, a rating / flag / label `patch` to apply instead.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `paths` | `std::vector<std::string>` |  |  |
-  | `look` | `Preset` |  | only its values, curves, mix, grade and LUT are used |
-  | `metaOnly` | `bool` | `false` | rate / flag / label the pictures instead |
-  | `patch` | `MetaPatch` |  | ... with this |
-
-- `struct SyncOutcome`: The result for one picture.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `path` | `std::string` |  |  |
-  | `ok` | `bool` | `false` |  |
-  | `error` | `std::string` |  | why it was skipped |
-  | `meta` | `PhotoMeta` |  | metaOnly: the picture's meta after the patch |
-
-- `struct SyncResult`: The results of one batch, in the order of the job's paths.
-
-  | Field | Type | Default | Meaning |
-  |---|---|---|---|
-  | `metaOnly` | `bool` | `false` |  |
-  | `items` | `std::vector<SyncOutcome>` |  |  |
-
-
-**State and tables**
-
-- `syncWorker`: `static LatestWorker<SyncJob, SyncResult>`, initially `{runSyncJob}`. The worker that runs sync and batch-rating jobs; defined after `runSyncJob`.
+**Depends on:** `workers.hpp`, `saved_edits.hpp`, `filmstrip.hpp` (defined later); engine: `sync_job.hpp` (`SyncJob`, `SyncOutcome`), `adjustment_set.hpp` (`currentPreset`), `photo_meta.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Functions**
-
-Reading a sidecar is the engine's `readSidecarFile(path, &text[, &why])` (`io/sidecar_file.hpp`), which returns a `SidecarRead`: `Absent`, `Empty`, `TooBig`, `Unreadable` or `Ok`. "Absent" means the file is not there; a file that is there but can't be opened, or whose existence can't be checked, is `Unreadable`, never `Absent`, because treating it as absent would rebuild the sidecar from nothing and rename it over the real file, losing that picture's crop, rotation and masks. (This replaces the old `readSidecarText` helper that lived in this file.)
-
-**`static bool writeTextAtomic(const std::filesystem::path &path, const std::string &text, std::string *err)`**: Temp file, then rename, like saveSidecar. Any thread.
-
-**`static SyncOutcome syncOne(SyncJob &job, const std::string &path)`**: **Worker thread only.** One picture of a batch. May throw (`std::bad_alloc`, a library exception): `runSyncJob` is the boundary. Only `SidecarRead::Absent` and `Ok` can be rewritten from; any other state (unreadable, empty, too big) gives *"couldn't read its saved edits"* and the picture is skipped, never treated as absent. A decode failure while learning the size of a picture with no sidecar gives *"couldn't open it: <reason>"*. Then it builds the new text and writes it with `writeTextAtomic`.
-
-**`static std::optional<SyncResult> runSyncJob(SyncJob &&job, WorkerCancel)`**: **Worker thread only.** Always returns a value (it can't be cancelled), and never throws. Every picture is guarded on its own: one job is a whole batch and each finished picture is already written to disk, so an exception on picture 7 of 20 must not discard the outcomes of 1 to 6 (the UI would never mark them as edited). A throw becomes a skipped picture with a reason (`std::bad_alloc` gives *"ran out of memory"*, another `std::exception` its `what()`, anything else *"unexpected error"*) and the batch carries on. For each path (`syncOne`): read its sidecar (`readSidecarFile`); a missing sidecar with a `metaOnly` patch that would record nothing is counted as done without decoding. A missing sidecar otherwise makes it learn the upright size (`image_source::uprightSize`). Then builds the new text with `sidecarPatchMeta` (rating-only jobs) or `sidecarSyncLook` (look jobs: values, curves, Color Mixer, Color Grading, LUT) and writes it atomically. One `SyncOutcome` per picture says whether it worked and why not.
 
 **`static bool syncBusy()`**: True while a sync is running, and then also shows "Wait for the sync to finish" in the status bar. Commands that touch sidecars (opening a picture, another sync) call this first.
 
@@ -1179,9 +1021,9 @@ Reading a sidecar is the engine's `readSidecarFile(path, &text[, &why])` (`io/si
 **`static void syncSettings()`**: Image > Sync Settings to Selected. Ignored while dragging, with no picture open, or while a sync runs. Collects the selected pictures other than the open one that the filter isn't hiding. With none: "Select other photos in the filmstrip first (Ctrl+click, Shift+click)". Otherwise snapshots the open picture's look (`adjust.currentPreset`), submits the job and shows "Syncing settings to N photo(s)...".
 
 ### `export.hpp`
-**Batch export** from the filmstrip: File > Export Selected... and Export All Shown... write every picked picture to one folder with the Export pane's settings. Like Sync, the pictures are not open, so the work is a pure function of each picture's file and its sidecar (`exportPicture` in `workers/export_worker.hpp`: decode, load the edits into a local `AdjustmentSet`, orient → straighten → crop → render, resize, encode). The open picture is exported from its sidecar too, so its pending edits are flushed to disk first. Unlike Sync it can be stopped: Stop Export drops what is queued and abandons the picture being rendered. Export only *reads* sidecars, so it does not block opening pictures or editing; a picture is exported with the edits it has on disk when the batch reaches it. (The single-picture export, `exportImage`, is in `meta_commands.hpp`.)
+**Batch export** from the filmstrip: File > Export Selected... and Export All Shown... write every picked picture to one folder with the Export pane's settings. Like Sync, the pictures are not open, so the work is a pure function of each picture's file and its sidecar (`exportPicture` in `workers/export_worker.hpp`: decode, load the edits into a local `AdjustmentSet`, orient → straighten → crop → render, resize, encode). The open picture is exported from its sidecar too, so its pending edits are flushed to disk first. Unlike Sync it can be stopped: Stop Export drops what is queued and abandons the picture being rendered. Export only *reads* sidecars, so it does not block opening pictures or editing; a picture is exported with the edits it has on disk when the batch reaches it. (The single-picture export, `exportImage`, is in `meta_commands.hpp`.) The worker is `workers().exporter` ([workers.hpp](#workershpp)).
 
-**Depends on:** `saved_edits.hpp`; engine: `export_worker.hpp`, `file_utils.hpp`. **Test:** the work a batch does (`exportPicture`, `ExportWorker`) is tested in the engine: `tests/cases/export_worker.inc`, `export_render.inc`. This file's own code has no case of its own; it is compiled into `golden_render_test` and `lut_pane_test`.
+**Depends on:** `workers.hpp`, `saved_edits.hpp`; engine: `export_worker.hpp`, `file_utils.hpp`. **Test:** the work a batch does (`exportPicture`, `ExportWorker`) is tested in the engine: `tests/cases/export_worker.inc`, `export_render.inc`. This file's own code has no case of its own; it is compiled into `golden_render_test` and `lut_pane_test`.
 
 **Types**
 
@@ -1201,7 +1043,6 @@ Reading a sidecar is the engine's `readSidecarFile(path, &text[, &why])` (`io/si
 
 **State and tables**
 
-- `exportWorker`: `static ExportWorker`. The worker that exports the batch (`ExportWorker`, `workers/export_worker.hpp`).
 - `exportRun`: `static ExportRun`. The running batch's progress.
 
 **Functions**
@@ -1223,9 +1064,9 @@ Reading a sidecar is the engine's `readSidecarFile(path, &text[, &why])` (`io/si
 ## Filmstrip and per-picture commands
 
 ### `filmstrip.hpp`
-The filmstrip: a row of thumbnails along the bottom of the window listing the pictures of the open picture's folder, with a filter bar on top. Holds the strip's logic (listing a folder into a `FilmStrip`, the filter, selection, scrolling, keeping the strip in step with the open picture, opening a picture by index), the thumbnail bookkeeping (queueing the `ThumbWorker`, taking its results in, one GPU texture per thumbnail) and the painting. The data types (`FilmEntry`, `FilmStrip`) are in `editor_state.hpp`; the thumbnail maker and worker are the engine's `workers/thumb_worker.hpp`. UI thread only, except the worker. Files shown are the folder's JPEG / PNG pictures plus their virtual copies (`photo.jpg|vc2`), at most `kFilmMaxFiles`. The `// BEGIN filmstrip` / `// END filmstrip` fence is kept around the whole file.
+The filmstrip: a row of thumbnails along the bottom of the window listing the pictures of the open picture's folder, with a filter bar on top. Holds the strip's logic (listing a folder into a `FilmStrip`, the filter, selection, scrolling, keeping the strip in step with the open picture, opening a picture by index), the thumbnail bookkeeping (queueing `workers().thumb`, taking its results in, one GPU texture per thumbnail) and the painting. The data types (`FilmEntry`, `FilmStrip`) are in `editor_state.hpp`; the thumbnail maker and worker are the engine's `workers/thumb_worker.hpp`. UI thread only, except the worker. Files shown are the folder's JPEG / PNG pictures plus their virtual copies (`photo.jpg|vc2`), at most `kFilmMaxFiles`. The `// BEGIN filmstrip` / `// END filmstrip` fence is kept around the whole file.
 
-**Depends on:** `decode.hpp`, `sync.hpp`, `meta_commands.hpp` (defined later); engine: `file_utils.hpp`, `image_meta.hpp`, `photo_meta.hpp`, `thumb_worker.hpp`, `virtual_copy.hpp`. **Test:** the thumbnail maker and worker are tested in the engine (`tests/cases/thumb_worker.inc`). This file's own code has no case of its own; it is compiled into `golden_render_test` and `lut_pane_test`.
+**Depends on:** `workers.hpp`, `sync.hpp`, `meta_commands.hpp` (defined later); engine: `file_utils.hpp`, `image_meta.hpp`, `photo_meta.hpp`, `thumb_worker.hpp`, `virtual_copy.hpp`. **Test:** the thumbnail maker and worker are tested in the engine (`tests/cases/thumb_worker.inc`). This file's own code has no case of its own; it is compiled into `golden_render_test` and `lut_pane_test`.
 
 **Constants**
 
@@ -1267,12 +1108,11 @@ Five stars ("at least N", click the lit one again to switch it off), Pick and Re
 
 **State and tables**
 
-- `thumbWorker`: `static ThumbWorker`, initially `{ [](const std::string &path) { return exifOrientationOf(path); }}`. The worker that makes the thumbnails (`ThumbWorker`, `workers/thumb_worker.hpp`).
 - `kLabelColors`: `constexpr std::array<Color, kLabelCount>`, initially `{ Color{225, 70, 70}, Color{232, 196, 60}, Color{80, 185, 100}, Color…`. The five colour labels' colours (Red, Yellow, Green, Blue, Purple).
 
 **Forward declarations** (defined in a later file; declared here because this code is written before it)
 
-- `static void adoptDecoded(DecodeWorker::Result &&r)`: defined below
+- `static void adoptDecoded(DecodeWorker::Result &&r)`: defined in `meta_commands.hpp` (`DecodeWorker` is in the engine's [`decode_job.hpp`](headers.md#decode_jobhpp))
 
 **Functions**
 
@@ -1306,7 +1146,7 @@ Five stars ("at least N", click the lit one again to switch it off), Pick and Re
 
 **`static void collectThumbJobs()`**: UI thread: takes in the thumbnails the worker has made. Results from a folder we have left are ignored. A new thumbnail replaces the entry's, except the open picture's own once it has edits (its thumbnail already shows them); an original's thumbnail is shared with the virtual copies right after it that have none. A failed thumbnail marks the entry `failed` (a virtual copy is skipped on purpose, not a failure). The first reading of each entry's rating / edited flag is taken from the worker; after that the editor's own value is the truth. Re-filters if a filter is waiting for metadata that just arrived.
 
-**`static void filmOpenIndex(int i)`**: **Input:** an index into `files`. Opens that picture. Ignored if out of range, already the target, while dragging or while a sync runs. Sets `target`, scrolls to it and keeps it in the view. If it is another set of edits (a virtual copy) of the picture already open (same `vcImageOf`), it skips the decode and adopts a copy of the open pixels exactly as a finished decode would (`adoptDecoded`, which flushes the old edits and loads these). Otherwise shows "Opening <name>..." and submits the path to `decodeWorker`.
+**`static void filmOpenIndex(int i)`**: **Input:** an index into `files`. Opens that picture. Ignored if out of range, already the target, while dragging or while a sync runs. Sets `target`, scrolls to it and keeps it in the view. If it is another set of edits (a virtual copy) of the picture already open (same `vcImageOf`), it invalidates `workers().decode` (a decode of some other file is no longer wanted), skips the decode and adopts a copy of the open pixels exactly as a finished decode would (`adoptDecoded`, which flushes the old edits and loads these). Otherwise shows "Opening <name>..." and submits the path to `workers().decode`.
 
 **`static void filmStep(int d)`**: **Input:** +1 or −1 (Left / Right keys). Opens the previous / next picture among those the strip shows, relative to the one asked for last (so quick repeats keep moving). If the base picture is hidden by the filter it starts from the edge. Clamped at both ends.
 
@@ -1339,7 +1179,7 @@ Five stars ("at least N", click the lit one again to switch it off), Pick and Re
 ### `meta_commands.hpp`
 Four groups of commands that don't belong to one pane. **Rating, flag and colour label** (`setPhotoMeta`, `applyMetaPatch`, `ratePhoto`, `flagPhoto`, `labelPhoto`): not edits, so they make no undo step and no History label and never touch `adjust.version()`. The open picture's value lives in `state.meta`, is mirrored into the strip's entry and is saved in the sidecar's `meta` object (`autosaveSidecar` / `flushSidecar` look at `state.metaDirty`). A command changes the open picture at once; if other pictures are selected in the filmstrip it changes them too, on the Sync Settings worker (their sidecars are patched in the background and the strip updates when the batch finishes). The open picture is never in that batch, so it can't race with autosave. "Choose the value it already has to clear it" is decided from the open picture, and the result (set or clear) is applied to every selected picture alike. **Opening** (`adoptDecoded`, `collectDecodeJob`, `openImage`): `adoptDecoded` is the one place where a freshly decoded picture replaces the open one. **Single-picture export** (`exportImage`). **`toggleSidebar`**.
 
-**Depends on:** `render_worker.hpp`, `render_update.hpp`, `crop.hpp`, `geometry_worker.hpp`, `decode.hpp`, `segmentation.hpp`, `saved_edits.hpp`, `lut_pane.hpp`, `sync.hpp`, `filmstrip.hpp`; engine: `adjustment_set.hpp`, `color_tag.hpp`, `export_worker.hpp`, `file_utils.hpp`, `image16.hpp`, `image_codec.hpp`, `photo_meta.hpp`, `raster_ops.hpp`, `render_core.hpp`, `thumb_worker.hpp`, `virtual_copy.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
+**Depends on:** `workers.hpp`, `render_update.hpp`, `crop.hpp`, `geometry_worker.hpp`, `segmentation.hpp`, `saved_edits.hpp`, `lut_pane.hpp`, `sync.hpp`, `filmstrip.hpp`; engine: `adjustment_set.hpp`, `color_tag.hpp`, `export_worker.hpp`, `file_utils.hpp`, `image16.hpp`, `image_codec.hpp`, `photo_meta.hpp`, `raster_ops.hpp`, `render_core.hpp`, `thumb_worker.hpp`, `virtual_copy.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
 **Functions**
 
@@ -2433,69 +2273,68 @@ The status bar at the bottom: on the left one line joining the picture's name an
 | # | File | What it holds |
 |---|---|---|
 | 1 | [`constants.hpp`](#constantshpp) | layout constants and the color palette |
-| 2 | [`render_worker.hpp`](#render_workerhpp) | the background render worker (fence: renderworker) |
+| 2 | [`workers.hpp`](#workershpp) | every background worker, owned in one place (`workers()`) |
 | 3 | [`editor_state.hpp`](#editor_statehpp) | crop / filmstrip / compare state and EditorState (the global `state`) |
 | 4 | [`ui_state.hpp`](#ui_statehpp) | UI-only state: tabs, selections, clipboards (`uiState`) |
 | 5 | [`canvas_view.hpp`](#canvas_viewhpp) | where the picture sits inside the canvas: zoom, scroll, scrollbars |
 | 6 | [`render_update.hpp`](#render_updatehpp) | handing the render worker's result back, drag preview, image refresh |
 | 7 | [`crop.hpp`](#crophpp) | crop selection helpers |
-| 8 | [`geometry_worker.hpp`](#geometry_workerhpp) | the background geometry worker and its UI-thread glue |
+| 8 | [`geometry_worker.hpp`](#geometry_workerhpp) | the geometry worker's UI-thread glue |
 | 9 | [`crop_tool.hpp`](#crop_toolhpp) | crop tool: hit-testing, dragging, apply / remove crop |
 | 10 | [`rotate.hpp`](#rotatehpp) | rotate / flip and straighten |
-| 11 | [`decode.hpp`](#decodehpp) | opening a file: the background decode worker |
-| 12 | [`segmentation.hpp`](#segmentationhpp) | object segmentation worker and engine info |
-| 13 | [`saved_edits.hpp`](#saved_editshpp) | saved edits: the sidecar file |
-| 14 | [`lut_pane.hpp`](#lut_panehpp) | 3D LUT list, previews and cache |
-| 15 | [`sync.hpp`](#synchpp) | Sync Settings: one look onto other pictures |
-| 16 | [`export.hpp`](#exporthpp) | batch export from the filmstrip |
-| 17 | [`filmstrip.hpp`](#filmstriphpp) | the filmstrip (fence: filmstrip) |
-| 18 | [`meta_commands.hpp`](#meta_commandshpp) | rating, flag and color label commands |
-| 19 | [`widgets.hpp`](#widgetshpp) | small reusable widgets, pointer helpers, text-field keys |
-| 20 | [`color_ui.hpp`](#color_uihpp) | Color Mixer and Color Grading UI |
-| 21 | [`masks.hpp`](#maskshpp) | masks: selection, editing, overlay color, name field |
-| 22 | [`presets.hpp`](#presetshpp) | presets and Copy / Paste Settings |
-| 23 | [`snapshots.hpp`](#snapshotshpp) | named snapshots |
-| 24 | [`virtual_copies.hpp`](#virtual_copieshpp) | virtual copies |
-| 25 | [`mask_list.hpp`](#mask_listhpp) | mask list operations and parts |
-| 26 | [`mask_shapes.hpp`](#mask_shapeshpp) | radial, linear and rectangle mask geometry on the canvas |
-| 27 | [`mask_polygon.hpp`](#mask_polygonhpp) | polygon / lasso tool |
-| 28 | [`mask_brush.hpp`](#mask_brushhpp) | brush painting |
-| 29 | [`mask_overlays.hpp`](#mask_overlayshpp) | brush, luminosity and combined mask overlays |
-| 30 | [`mask_widgets.hpp`](#mask_widgetshpp) | Masks pane widgets (also the preset / LUT / snapshot rows) |
-| 31 | [`history_panel.hpp`](#history_panelhpp) | the History panel |
-| 32 | [`crop_overlay.hpp`](#crop_overlayhpp) | paints the crop selection over the picture |
-| 33 | [`compare.hpp`](#comparehpp) | Before / After (fence: compare) |
-| 34 | [`canvas_paint.hpp`](#canvas_painthpp) | clipping overlay, GPU copies of the picture, paintCanvas |
-| 35 | [`readout.hpp`](#readouthpp) | RGB readout under the cursor |
-| 36 | [`wb_picker.hpp`](#wb_pickerhpp) | white-balance picker |
-| 37 | [`auto_tone_hist.hpp`](#auto_tone_histhpp) | Auto Tone, flushPendingAdjust, histogram and scopes |
-| 38 | [`curve_editor.hpp`](#curve_editorhpp) | tone curve editor (canvas side) |
-| 39 | [`mask_effects.hpp`](#mask_effectshpp) | mask effects: Amount, Color Mix, Grading, Curve |
-| 40 | [`mask_curve.hpp`](#mask_curvehpp) | mask tone curve editor (canvas side) |
-| 41 | [`startup_checks.hpp`](#startup_checkshpp) | verifyAdjustmentSpecs (runs once at startup) |
-| 42 | [`panes/pane_helpers.hpp`](#panespane_helpershpp) | small views shared by several panes |
-| 43 | [`panes/info_pane.hpp`](#panesinfo_panehpp) | the Info pane (buildInfoPane) |
-| 44 | [`panes/history_pane.hpp`](#paneshistory_panehpp) | the History pane (buildHistoryPane) |
-| 45 | [`panes/snapshots_pane.hpp`](#panessnapshots_panehpp) | the Snapshots pane (buildSnapshotsPane) |
-| 46 | [`panes/adjust_pane.hpp`](#panesadjust_panehpp) | the Adjust pane (buildAdjustPane) |
-| 47 | [`panes/presets_pane.hpp`](#panespresets_panehpp) | the Presets pane (buildPresetsPane) |
-| 48 | [`panes/luts_pane.hpp`](#panesluts_panehpp) | the LUTs pane (buildLutsPane) |
-| 49 | [`panes/curve_pane.hpp`](#panescurve_panehpp) | the Curve pane (buildCurvePane) |
-| 50 | [`panes/mix_pane.hpp`](#panesmix_panehpp) | the Color Mix pane (buildMixPane) |
-| 51 | [`panes/grade_pane.hpp`](#panesgrade_panehpp) | the Color Grade pane (buildGradePane) |
-| 52 | [`panes/masks_pane.hpp`](#panesmasks_panehpp) | the Masks pane and its right-hand editor (buildMaskPanes) |
-| 53 | [`panes/crop_pane.hpp`](#panescrop_panehpp) | the Crop pane (buildCropPane) |
-| 54 | [`panes/rotate_pane.hpp`](#panesrotate_panehpp) | the Rotate pane (buildRotatePane) |
-| 55 | [`panes/export_pane.hpp`](#panesexport_panehpp) | the Export pane (buildExportPane) |
-| 56 | [`shell/shortcuts.hpp`](#shellshortcutshpp) | keyboard shortcuts (installShortcuts) |
-| 57 | [`shell/titlebar.hpp`](#shelltitlebarhpp) | the title bar (buildTitlebar) |
-| 58 | [`shell/activity_bar.hpp`](#shellactivity_barhpp) | the activity bar (buildActivityBar) |
-| 59 | [`shell/histogram_view.hpp`](#shellhistogram_viewhpp) | the pinned histogram / scopes view (buildHistogramView) |
-| 60 | [`shell/sidebar.hpp`](#shellsidebarhpp) | the left sidebar: title, histogram and every pane (buildSidebar) |
-| 61 | [`shell/sidebar_divider.hpp`](#shellsidebar_dividerhpp) | the draggable divider right of the sidebar (buildSidebarDivider) |
-| 62 | [`shell/center_column.hpp`](#shellcenter_columnhpp) | canvas, "no image" placeholder and filmstrip (buildCenterColumn) |
-| 63 | [`shell/mask_panel.hpp`](#shellmask_panelhpp) | the right-hand mask panel and its divider (addMaskPanel) |
-| 64 | [`shell/status_bar.hpp`](#shellstatus_barhpp) | the status bar (buildStatusBar) |
+| 11 | [`segmentation.hpp`](#segmentationhpp) | object segmentation: the UI-thread glue |
+| 12 | [`saved_edits.hpp`](#saved_editshpp) | saved edits: the sidecar file |
+| 13 | [`lut_pane.hpp`](#lut_panehpp) | 3D LUT list, previews and cache |
+| 14 | [`sync.hpp`](#synchpp) | Sync Settings and batch rating: the UI-thread glue |
+| 15 | [`export.hpp`](#exporthpp) | batch export from the filmstrip |
+| 16 | [`filmstrip.hpp`](#filmstriphpp) | the filmstrip (fence: filmstrip) |
+| 17 | [`meta_commands.hpp`](#meta_commandshpp) | rating, flag and color label commands |
+| 18 | [`widgets.hpp`](#widgetshpp) | small reusable widgets, pointer helpers, text-field keys |
+| 19 | [`color_ui.hpp`](#color_uihpp) | Color Mixer and Color Grading UI |
+| 20 | [`masks.hpp`](#maskshpp) | masks: selection, editing, overlay color, name field |
+| 21 | [`presets.hpp`](#presetshpp) | presets and Copy / Paste Settings |
+| 22 | [`snapshots.hpp`](#snapshotshpp) | named snapshots |
+| 23 | [`virtual_copies.hpp`](#virtual_copieshpp) | virtual copies |
+| 24 | [`mask_list.hpp`](#mask_listhpp) | mask list operations and parts |
+| 25 | [`mask_shapes.hpp`](#mask_shapeshpp) | radial, linear and rectangle mask geometry on the canvas |
+| 26 | [`mask_polygon.hpp`](#mask_polygonhpp) | polygon / lasso tool |
+| 27 | [`mask_brush.hpp`](#mask_brushhpp) | brush painting |
+| 28 | [`mask_overlays.hpp`](#mask_overlayshpp) | brush, luminosity and combined mask overlays |
+| 29 | [`mask_widgets.hpp`](#mask_widgetshpp) | Masks pane widgets (also the preset / LUT / snapshot rows) |
+| 30 | [`history_panel.hpp`](#history_panelhpp) | the History panel |
+| 31 | [`crop_overlay.hpp`](#crop_overlayhpp) | paints the crop selection over the picture |
+| 32 | [`compare.hpp`](#comparehpp) | Before / After (fence: compare) |
+| 33 | [`canvas_paint.hpp`](#canvas_painthpp) | clipping overlay, GPU copies of the picture, paintCanvas |
+| 34 | [`readout.hpp`](#readouthpp) | RGB readout under the cursor |
+| 35 | [`wb_picker.hpp`](#wb_pickerhpp) | white-balance picker |
+| 36 | [`auto_tone_hist.hpp`](#auto_tone_histhpp) | Auto Tone, flushPendingAdjust, histogram and scopes |
+| 37 | [`curve_editor.hpp`](#curve_editorhpp) | tone curve editor (canvas side) |
+| 38 | [`mask_effects.hpp`](#mask_effectshpp) | mask effects: Amount, Color Mix, Grading, Curve |
+| 39 | [`mask_curve.hpp`](#mask_curvehpp) | mask tone curve editor (canvas side) |
+| 40 | [`startup_checks.hpp`](#startup_checkshpp) | verifyAdjustmentSpecs (runs once at startup) |
+| 41 | [`panes/pane_helpers.hpp`](#panespane_helpershpp) | small views shared by several panes |
+| 42 | [`panes/info_pane.hpp`](#panesinfo_panehpp) | the Info pane (buildInfoPane) |
+| 43 | [`panes/history_pane.hpp`](#paneshistory_panehpp) | the History pane (buildHistoryPane) |
+| 44 | [`panes/snapshots_pane.hpp`](#panessnapshots_panehpp) | the Snapshots pane (buildSnapshotsPane) |
+| 45 | [`panes/adjust_pane.hpp`](#panesadjust_panehpp) | the Adjust pane (buildAdjustPane) |
+| 46 | [`panes/presets_pane.hpp`](#panespresets_panehpp) | the Presets pane (buildPresetsPane) |
+| 47 | [`panes/luts_pane.hpp`](#panesluts_panehpp) | the LUTs pane (buildLutsPane) |
+| 48 | [`panes/curve_pane.hpp`](#panescurve_panehpp) | the Curve pane (buildCurvePane) |
+| 49 | [`panes/mix_pane.hpp`](#panesmix_panehpp) | the Color Mix pane (buildMixPane) |
+| 50 | [`panes/grade_pane.hpp`](#panesgrade_panehpp) | the Color Grade pane (buildGradePane) |
+| 51 | [`panes/masks_pane.hpp`](#panesmasks_panehpp) | the Masks pane and its right-hand editor (buildMaskPanes) |
+| 52 | [`panes/crop_pane.hpp`](#panescrop_panehpp) | the Crop pane (buildCropPane) |
+| 53 | [`panes/rotate_pane.hpp`](#panesrotate_panehpp) | the Rotate pane (buildRotatePane) |
+| 54 | [`panes/export_pane.hpp`](#panesexport_panehpp) | the Export pane (buildExportPane) |
+| 55 | [`shell/shortcuts.hpp`](#shellshortcutshpp) | keyboard shortcuts (installShortcuts) |
+| 56 | [`shell/titlebar.hpp`](#shelltitlebarhpp) | the title bar (buildTitlebar) |
+| 57 | [`shell/activity_bar.hpp`](#shellactivity_barhpp) | the activity bar (buildActivityBar) |
+| 58 | [`shell/histogram_view.hpp`](#shellhistogram_viewhpp) | the pinned histogram / scopes view (buildHistogramView) |
+| 59 | [`shell/sidebar.hpp`](#shellsidebarhpp) | the left sidebar: title, histogram and every pane (buildSidebar) |
+| 60 | [`shell/sidebar_divider.hpp`](#shellsidebar_dividerhpp) | the draggable divider right of the sidebar (buildSidebarDivider) |
+| 61 | [`shell/center_column.hpp`](#shellcenter_columnhpp) | canvas, "no image" placeholder and filmstrip (buildCenterColumn) |
+| 62 | [`shell/mask_panel.hpp`](#shellmask_panelhpp) | the right-hand mask panel and its divider (addMaskPanel) |
+| 63 | [`shell/status_bar.hpp`](#shellstatus_barhpp) | the status bar (buildStatusBar) |
 
 ## Global variables and tables
 
@@ -2503,26 +2342,18 @@ Every file-scope variable defined under `src/app/` (constants are listed in each
 
 | Variable | File | Meaning |
 |---|---|---|
-| `renderWorker` | [`render_worker.hpp`](#render_workerhpp) |  |
 | `kCropAspects` | [`editor_state.hpp`](#editor_statehpp) |  |
 | `state` | [`editor_state.hpp`](#editor_statehpp) |  |
 | `uiState` | [`ui_state.hpp`](#ui_statehpp) |  |
-| `geometryWorker` | [`geometry_worker.hpp`](#geometry_workerhpp) |  |
-| `decodeWorker` | [`decode.hpp`](#decodehpp) |  |
-| `gSegInfoMutex` | [`segmentation.hpp`](#segmentationhpp) | seg_basic.hpp as fallback) ---- Which engine is active, shown in the Object panel (written by the worker, read by the UI thread's label poll). |
-| `gSegInfo` | [`segmentation.hpp`](#segmentationhpp) |  |
-| `segmentWorker` | [`segmentation.hpp`](#segmentationhpp) |  |
+| `instance` (inside `workers()`) | [`workers.hpp`](#workershpp) | The one `Workers`: `sam`, `render`, `geometry`, `decode`, `segment`, `sync`, `exporter`, `thumb`, `lutPreview`. Created on first use. |
+| `renderWorker`, `geometryWorker`, `decodeWorker`, `segmentWorker`, `syncWorker`, `exportWorker`, `thumbWorker`, `lutPreviewWorker` | [`workers.hpp`](#workershpp) | Transitional `inline` references into `workers()`; to be deleted once unused. |
 | `gLuts` | [`lut_pane.hpp`](#lut_panehpp) | The rows of the LUTs list, at most `kLutRows`. |
 | `gLutsLoaded` | [`lut_pane.hpp`](#lut_panehpp) | The folder was listed since the pane was last opened. |
 | `gLutPaintCounter` | [`lut_pane.hpp`](#lut_panehpp) | Counter stamping each row's `paintVersion` whenever its preview or text changes. |
-| `lutPreviewWorker` | [`lut_pane.hpp`](#lut_panehpp) | The worker that renders the previews (`LutPreviewWorker`, `workers/lut_preview_worker.hpp`). |
 | `gLutSerial` | [`lut_pane.hpp`](#lut_panehpp) | The serial of the batch whose results are taken in; results of an earlier batch are ignored. |
 | `gLutBuilt` | [`lut_pane.hpp`](#lut_panehpp) | What the current previews were made for. |
 | `gLutCacheEpoch` | [`lut_pane.hpp`](#lut_panehpp) | Bumped when the LUT cache is emptied; `currentLutStatus()` looks up again when it changes. |
-| `syncWorker` | [`sync.hpp`](#synchpp) | The worker that runs sync and batch-rating jobs. |
-| `exportWorker` | [`export.hpp`](#exporthpp) | The worker that exports the batch (`ExportWorker`, `workers/export_worker.hpp`). |
 | `exportRun` | [`export.hpp`](#exporthpp) | The running batch's progress. |
-| `thumbWorker` | [`filmstrip.hpp`](#filmstriphpp) | The worker that makes the thumbnails (`ThumbWorker`, `workers/thumb_worker.hpp`). |
 | `kLabelColors` | [`filmstrip.hpp`](#filmstriphpp) | The five colour labels' colours (Red, Yellow, Green, Blue, Purple). |
 | `gTextFields` | [`widgets.hpp`](#widgetshpp) | Every registered name field (see `registerTextField`); only ever appended to. |
 | `kMaskTintPalette` | [`masks.hpp`](#maskshpp) | The colours the selected mask's overlay can be painted in (Red, Green, Blue, Yellow, ...). One place, so every overlay (radial / linear gradients, brush, luminosity, colour range and combined bitmaps) agrees. |
@@ -2539,7 +2370,7 @@ Every file-scope variable defined under `src/app/` (constants are listed in each
 **D** `deleteSelectedMask` ([virtual_copies](#virtual_copieshpp)), `deleteSelectedPreset` ([presets](#presetshpp)), `deleteSelectedSnapshot` ([snapshots](#snapshotshpp)), `deleteVirtualCopy` ([virtual_copies](#virtual_copieshpp)), `dropLutCache` ([lut_pane](#lut_panehpp)), `duplicateSelectedMask` ([mask_list](#mask_listhpp))  
 **E** `editLinearInView` ([masks](#maskshpp)), `editRadialInView` ([masks](#maskshpp)), `editShapeInView` ([masks](#maskshpp)), `enterDrag` ([render_update](#render_updatehpp)), `exportAllShown` ([export](#exporthpp)), `exportBusy` ([export](#exporthpp)), `exportImage` ([meta_commands](#meta_commandshpp)), `exportSelected` ([export](#exporthpp)), `exportTargets` ([export](#exporthpp))  
 **F** `filmAdoptFiles` ([filmstrip](#filmstriphpp)), `filmAdoptFolder` ([filmstrip](#filmstriphpp)), `filmApplyMeta` ([filmstrip](#filmstriphpp)), `filmBarClick` ([filmstrip](#filmstriphpp)), `filmBarItems` ([filmstrip](#filmstriphpp)), `filmClampScroll` ([filmstrip](#filmstriphpp)), `filmClearSelection` ([filmstrip](#filmstriphpp)), `filmClick` ([filmstrip](#filmstriphpp)), `filmEnsureVisible` ([filmstrip](#filmstriphpp)), `filmFilterChanged` ([filmstrip](#filmstriphpp)), `filmInsertEntry` ([virtual_copies](#virtual_copieshpp)), `filmLeave` ([filmstrip](#filmstriphpp)), `filmListFolder` ([filmstrip](#filmstriphpp)), `filmMarkEdited` ([filmstrip](#filmstriphpp)), `filmOpenIndex` ([filmstrip](#filmstriphpp)), `filmPushEntry` ([filmstrip](#filmstriphpp)), `filmPushWithCopies` ([filmstrip](#filmstriphpp)), `filmQueueThumbs` ([filmstrip](#filmstriphpp)), `filmRebuildView` ([filmstrip](#filmstriphpp)), `filmRemoveEntry` ([virtual_copies](#virtual_copieshpp)), `filmScrollBy` ([filmstrip](#filmstriphpp)), `filmSelectAll` ([filmstrip](#filmstriphpp)), `filmStep` ([filmstrip](#filmstriphpp)), `filmstripShown` ([filmstrip](#filmstriphpp)), `filmSync` ([filmstrip](#filmstriphpp)), `filmThumbTexture` ([filmstrip](#filmstriphpp)), `filmViewPos` ([filmstrip](#filmstriphpp)), `filterPresetNameField` ([presets](#presetshpp)), `filterSnapshotNameField` ([snapshots](#snapshotshpp)), `finishFullRender` ([render_update](#render_updatehpp)), `finishGeometryJob` ([geometry_worker](#geometry_workerhpp)), `flagPhoto` ([meta_commands](#meta_commandshpp)), `flushPendingAdjust` ([auto_tone_hist](#auto_tone_histhpp)), `flushSidecar` ([saved_edits](#saved_editshpp)), `forwardKeyToTextField` ([widgets](#widgetshpp))  
-**G** `geometryBusy` ([geometry_worker](#geometry_workerhpp)), `geometryDirty` ([geometry_worker](#geometry_workerhpp)), `getSegInfo` ([segmentation](#segmentationhpp)), `gradeEdit` ([color_ui](#color_uihpp)), `gradeEndDrag` ([color_ui](#color_uihpp)), `gradeHash` ([color_ui](#color_uihpp)), `gradeHsv` ([color_ui](#color_uihpp)), `gradeMix` ([color_ui](#color_uihpp)), `gradeRangeName` ([color_ui](#color_uihpp)), `gradeWheelImage` ([color_ui](#color_uihpp))  
+**G** `geometryBusy` ([geometry_worker](#geometry_workerhpp)), `geometryDirty` ([geometry_worker](#geometry_workerhpp)), `getSegInfo` ([workers](#workershpp)), `gradeEdit` ([color_ui](#color_uihpp)), `gradeEndDrag` ([color_ui](#color_uihpp)), `gradeHash` ([color_ui](#color_uihpp)), `gradeHsv` ([color_ui](#color_uihpp)), `gradeMix` ([color_ui](#color_uihpp)), `gradeRangeName` ([color_ui](#color_uihpp)), `gradeWheelImage` ([color_ui](#color_uihpp))  
 **H** `historyStepForRow` ([history_panel](#history_panelhpp)), `hoverClear` ([readout](#readouthpp)), `hoverSample` ([readout](#readouthpp))  
 **I** `importLutPaths` ([lut_pane](#lut_panehpp)), `importLuts` ([lut_pane](#lut_panehpp)), `installShortcuts` ([shell/shortcuts](#shellshortcutshpp))  
 **J** `jumpToHistory` ([history_panel](#history_panelhpp))  
@@ -2548,10 +2379,10 @@ Every file-scope variable defined under `src/app/` (constants are listed in each
 **N** `newMaskShape` ([virtual_copies](#virtual_copieshpp)), `nextSnapshotName` ([snapshots](#snapshotshpp)), `noteLutProblem` ([lut_pane](#lut_panehpp)), `nudgeAngle` ([rotate](#rotatehpp))  
 **O** `objectCurrentPrompts` ([virtual_copies](#virtual_copieshpp)), `objectPrefetch` ([virtual_copies](#virtual_copieshpp)), `objectPress` ([virtual_copies](#virtual_copieshpp)), `openFolder` ([filmstrip](#filmstriphpp)), `openImage` ([meta_commands](#meta_commandshpp))  
 **P** `paintBrushCursor` ([mask_overlays](#mask_overlayshpp)), `paintBrushPin` ([mask_overlays](#mask_overlayshpp)), `paintBrushTint` ([mask_overlays](#mask_overlayshpp)), `paintCanvas` ([canvas_paint](#canvas_painthpp)), `paintClipOverlay` ([canvas_paint](#canvas_painthpp)), `paintClipTriangles` ([auto_tone_hist](#auto_tone_histhpp)), `paintCompareLabel` ([compare](#comparehpp)), `paintCompareOverlay` ([compare](#comparehpp)), `paintCompositeTint` ([mask_overlays](#mask_overlayshpp)), `paintCropOverlay` ([crop_overlay](#crop_overlayhpp)), `paintCurve` ([curve_editor](#curve_editorhpp)), `paintFilmstrip` ([filmstrip](#filmstriphpp)), `paintHistogram` ([auto_tone_hist](#auto_tone_histhpp)), `paintHistogramBars` ([auto_tone_hist](#auto_tone_histhpp)), `paintLinearOutline` ([mask_brush](#mask_brushhpp)), `paintLinearTint` ([mask_brush](#mask_brushhpp)), `paintLuminosityTint` ([mask_overlays](#mask_overlayshpp)), `paintMaskCurve` ([mask_curve](#mask_curvehpp)), `paintMaskOverlay` ([mask_overlays](#mask_overlayshpp)), `paintPartOutline` ([mask_overlays](#mask_overlayshpp)), `paintPolygonOutline` ([mask_brush](#mask_brushhpp)), `paintRadialOutline` ([mask_brush](#mask_brushhpp)), `paintRadialTint` ([mask_brush](#mask_brushhpp)), `paintRectOutline` ([mask_brush](#mask_brushhpp)), `paintScope` ([auto_tone_hist](#auto_tone_histhpp)), `paintSelectedObjectPrompts` ([mask_overlays](#mask_overlayshpp)), `paintViewBars` ([canvas_view](#canvas_viewhpp)), `pasteMaskEffects` ([mask_list](#mask_listhpp)), `pasteSettings` ([presets](#presetshpp)), `pictureLabel` ([saved_edits](#saved_editshpp)), `pictureTexture` ([canvas_paint](#canvas_painthpp)), `pollLutPreviews` ([lut_pane](#lut_panehpp)), `polyClampCoord` ([mask_polygon](#mask_polygonhpp)), `polyDocPts` ([mask_polygon](#mask_polygonhpp)), `polygonBegin` ([mask_polygon](#mask_polygonhpp)), `polygonBodyHit` ([mask_polygon](#mask_polygonhpp)), `polygonDirty` ([mask_polygon](#mask_polygonhpp)), `polygonDragTo` ([mask_polygon](#mask_polygonhpp)), `polygonEditPts` ([mask_polygon](#mask_polygonhpp)), `polygonInView` ([masks](#maskshpp)), `polygonRightPress` ([mask_polygon](#mask_polygonhpp)), `polyVertexAt` ([mask_polygon](#mask_polygonhpp)), `previewTexture` ([canvas_paint](#canvas_painthpp))  
-**R** `radialGeom` ([mask_shapes](#mask_shapeshpp)), `radialInView` ([masks](#maskshpp)), `ratePhoto` ([meta_commands](#meta_commandshpp)), `rectGeom` ([mask_shapes](#mask_shapeshpp)), `rectHit` ([mask_shapes](#mask_shapeshpp)), `rectInView` ([masks](#maskshpp)), `redo` ([rotate](#rotatehpp)), `refreshHistogramIfStale` ([auto_tone_hist](#auto_tone_histhpp)), `refreshLuts` ([lut_pane](#lut_panehpp)), `refreshPresets` ([presets](#presetshpp)), `registerTextField` ([widgets](#widgetshpp)), `removeCrop` ([crop_tool](#crop_toolhpp)), `removeLut` ([lut_pane](#lut_panehpp)), `removeSelectedPart` ([mask_list](#mask_listhpp)), `renameSelectedMask` ([masks](#maskshpp)), `resetAllCurves` ([curve_editor](#curve_editorhpp)), `resetColorGrade` ([color_ui](#color_uihpp)), `resetColorMix` ([color_ui](#color_uihpp)), `resetCropSelection` ([crop](#crophpp)), `resetCurve` ([curve_editor](#curve_editorhpp)), `resetOrientation` ([rotate](#rotatehpp)), `runDecodeJob` ([decode](#decodehpp)), `runGeometryJob` ([geometry_worker](#geometry_workerhpp)), `runRenderJob` ([render_worker](#render_workerhpp)), `runSegmentJob` ([segmentation](#segmentationhpp)), `runSyncJob` ([sync](#synchpp))  
-**S** `sameOwner` ([mask_overlays](#mask_overlayshpp)), `samModelDir` ([segmentation](#segmentationhpp)), `samplePreMaskColor` ([mask_brush](#mask_brushhpp)), `saveCurrentPreset` ([presets](#presetshpp)), `saveSidecar` ([saved_edits](#saved_editshpp)), `sectionLabel` ([panes/pane_helpers](#panespane_helpershpp)), `segmentObject` ([segmentation](#segmentationhpp)), `selectedIsBrush` ([masks](#maskshpp)), `selectedIsObject` ([virtual_copies](#virtual_copieshpp)), `selectedIsPolygon` ([masks](#maskshpp)), `selectedMask` ([masks](#maskshpp)), `selectedPart` ([masks](#maskshpp)), `selectedPartType` ([masks](#maskshpp)), `selectMask` ([masks](#maskshpp)), `selMask` ([masks](#maskshpp)), `selPart` ([masks](#maskshpp)), `setAngleDiscrete` ([rotate](#rotatehpp)), `setAngleFromSlider` ([rotate](#rotatehpp)), `setClipping` ([auto_tone_hist](#auto_tone_histhpp)), `setCornerMode` ([rotate](#rotatehpp)), `setCropAspect` ([crop](#crophpp)), `setCurveChannel` ([curve_editor](#curve_editorhpp)), `setDpr` ([canvas_view](#canvas_viewhpp)), `setLutAmount` ([lut_pane](#lut_panehpp)), `setMaskTintColor` ([masks](#maskshpp)), `setPartOp` ([mask_list](#mask_listhpp)), `setPhotoMeta` ([meta_commands](#meta_commandshpp)), `setSegInfo` ([segmentation](#segmentationhpp)), `setSelectedObjectMap` ([virtual_copies](#virtual_copieshpp)), `setStatus` ([editor_state](#editor_statehpp)), `setZoom` ([canvas_view](#canvas_viewhpp)), `shapeInView` ([masks](#maskshpp)), `sidebarButton` ([widgets](#widgetshpp)), `sidecarPath` ([saved_edits](#saved_editshpp)), `splitFromX` ([compare](#comparehpp)), `starsText` ([filmstrip](#filmstriphpp)), `startExportBatch` ([export](#exporthpp)), `stopExport` ([export](#exporthpp)), `submitGeometryJob` ([geometry_worker](#geometry_workerhpp)), `swallowPress` ([widgets](#widgetshpp)), `syncBusy` ([sync](#synchpp)), `syncMaskNameField` ([masks](#maskshpp)), `syncSettings` ([sync](#synchpp)), `syncSource` ([crop](#crophpp))  
+**R** `radialGeom` ([mask_shapes](#mask_shapeshpp)), `radialInView` ([masks](#maskshpp)), `ratePhoto` ([meta_commands](#meta_commandshpp)), `rectGeom` ([mask_shapes](#mask_shapeshpp)), `rectHit` ([mask_shapes](#mask_shapeshpp)), `rectInView` ([masks](#maskshpp)), `redo` ([rotate](#rotatehpp)), `refreshHistogramIfStale` ([auto_tone_hist](#auto_tone_histhpp)), `refreshLuts` ([lut_pane](#lut_panehpp)), `refreshPresets` ([presets](#presetshpp)), `registerTextField` ([widgets](#widgetshpp)), `removeCrop` ([crop_tool](#crop_toolhpp)), `removeLut` ([lut_pane](#lut_panehpp)), `removeSelectedPart` ([mask_list](#mask_listhpp)), `renameSelectedMask` ([masks](#maskshpp)), `resetAllCurves` ([curve_editor](#curve_editorhpp)), `resetColorGrade` ([color_ui](#color_uihpp)), `resetColorMix` ([color_ui](#color_uihpp)), `resetCropSelection` ([crop](#crophpp)), `resetCurve` ([curve_editor](#curve_editorhpp)), `resetOrientation` ([rotate](#rotatehpp))  
+**S** `sameOwner` ([mask_overlays](#mask_overlayshpp)), `samplePreMaskColor` ([mask_brush](#mask_brushhpp)), `saveCurrentPreset` ([presets](#presetshpp)), `saveSidecar` ([saved_edits](#saved_editshpp)), `sectionLabel` ([panes/pane_helpers](#panespane_helpershpp)), `selectedIsBrush` ([masks](#maskshpp)), `selectedIsObject` ([virtual_copies](#virtual_copieshpp)), `selectedIsPolygon` ([masks](#maskshpp)), `selectedMask` ([masks](#maskshpp)), `selectedPart` ([masks](#maskshpp)), `selectedPartType` ([masks](#maskshpp)), `selectMask` ([masks](#maskshpp)), `selMask` ([masks](#maskshpp)), `selPart` ([masks](#maskshpp)), `setAngleDiscrete` ([rotate](#rotatehpp)), `setAngleFromSlider` ([rotate](#rotatehpp)), `setClipping` ([auto_tone_hist](#auto_tone_histhpp)), `setCornerMode` ([rotate](#rotatehpp)), `setCropAspect` ([crop](#crophpp)), `setCurveChannel` ([curve_editor](#curve_editorhpp)), `setDpr` ([canvas_view](#canvas_viewhpp)), `setLutAmount` ([lut_pane](#lut_panehpp)), `setMaskTintColor` ([masks](#maskshpp)), `setPartOp` ([mask_list](#mask_listhpp)), `setPhotoMeta` ([meta_commands](#meta_commandshpp)), `setSelectedObjectMap` ([virtual_copies](#virtual_copieshpp)), `setStatus` ([editor_state](#editor_statehpp)), `setZoom` ([canvas_view](#canvas_viewhpp)), `shapeInView` ([masks](#maskshpp)), `sidebarButton` ([widgets](#widgetshpp)), `sidecarPath` ([saved_edits](#saved_editshpp)), `splitFromX` ([compare](#comparehpp)), `starsText` ([filmstrip](#filmstriphpp)), `startExportBatch` ([export](#exporthpp)), `stopExport` ([export](#exporthpp)), `submitGeometryJob` ([geometry_worker](#geometry_workerhpp)), `swallowPress` ([widgets](#widgetshpp)), `syncBusy` ([sync](#synchpp)), `syncMaskNameField` ([masks](#maskshpp)), `syncSettings` ([sync](#synchpp)), `syncSource` ([crop](#crophpp))  
 **T** `tintFlag` ([masks](#maskshpp)), `titlebarIconBtn` ([widgets](#widgetshpp)), `toggleBefore` ([compare](#comparehpp)), `toggleChannelClipping` ([auto_tone_hist](#auto_tone_histhpp)), `toggleClipping` ([auto_tone_hist](#auto_tone_histhpp)), `toggleFilmstrip` ([filmstrip](#filmstriphpp)), `toggleSidebar` ([meta_commands](#meta_commandshpp)), `toggleSplit` ([compare](#comparehpp)), `toggleWbPicker` ([wb_picker](#wb_pickerhpp)), `typingInTextField` ([masks](#maskshpp))  
 **U** `undo` ([rotate](#rotatehpp)), `updateAnglePreview` ([rotate](#rotatehpp)), `updateImageFromAdjustments` ([render_update](#render_updatehpp)), `updatePreviewFromAdjustments` ([render_update](#render_updatehpp))  
 **V** `verifyAdjustmentSpecs` ([startup_checks](#startup_checkshpp)), `viewBarPress` ([canvas_view](#canvas_viewhpp)), `viewDragTo` ([canvas_view](#canvas_viewhpp)), `viewGeo` ([canvas_view](#canvas_viewhpp)), `viewLocal` ([canvas_view](#canvas_viewhpp)), `viewOrigin` ([canvas_view](#canvas_viewhpp)), `viewPanBegin` ([canvas_view](#canvas_viewhpp)), `viewThumb` ([canvas_view](#canvas_viewhpp))  
-**W** `wbPickerActive` ([wb_picker](#wb_pickerhpp)), `wbPress` ([wb_picker](#wb_pickerhpp)), `wbSampleSpot` ([wb_picker](#wb_pickerhpp)), `winButton` ([widgets](#widgetshpp)), `writeTextAtomic` ([sync](#synchpp))  
+**W** `wbPickerActive` ([wb_picker](#wb_pickerhpp)), `wbPress` ([wb_picker](#wb_pickerhpp)), `wbSampleSpot` ([wb_picker](#wb_pickerhpp)), `winButton` ([widgets](#widgetshpp)), `workers` ([workers](#workershpp))  
 **Z** `zoomAbout` ([canvas_view](#canvas_viewhpp))

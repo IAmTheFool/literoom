@@ -26,7 +26,7 @@ static void adoptFullRender(RenderWorker::Result &&r) {
 // Non-blocking; polled once per frame from flushPendingAdjust.
 static void collectFullRender() {
   try {
-    if (auto r = renderWorker.collect())
+    if (auto r = workers().render.collect())
       adoptFullRender(std::move(*r));
   } catch (const std::exception &e) {
     setStatus(std::string("Render failed: ") + e.what(), /*isError=*/true);
@@ -36,10 +36,10 @@ static void collectFullRender() {
 // Blocking: makes `state.image` current. For the few places that need the
 // real pixels *now* (export).
 static void finishFullRender() {
-  if (!renderWorker.outstanding())
+  if (!workers().render.outstanding())
     return;
 
-  auto result = renderWorker.waitForLatest();
+  auto result = workers().render.waitForLatest();
 
   switch (result.status) {
   case RenderWorker::WaitStatus::completed:
@@ -67,7 +67,7 @@ static void finishFullRender() {
 // still in flight would be for values the drag is about to change, so drop it.
 static void enterDrag(bool isAngle) {
   if (!state.dragging)
-    renderWorker.invalidate();
+    workers().render.invalidate();
   state.dragging = true; // switches recompute+paint to the preview path
   state.dragIsAngle = isAngle;
 }
@@ -93,11 +93,11 @@ static void updateImageFromAdjustments() {
     return;
   clearStatus(); // the image is about to change: an old message is stale
   state.colorNoticePending = false;
-  renderWorker.invalidate(); // whatever was in flight is now out of date
+  workers().render.invalidate(); // whatever was in flight is now out of date
 
   // Orient/straighten/crop are comparatively expensive at full resolution —
   // the bilinear straighten especially — so on a large photo they run on
-  // geometryWorker instead of blocking here. geometryDirty() folds in
+  // the geometry worker instead of blocking here. geometryDirty() folds in
   // "a job is already running" (see its definition): either way, submit()
   // replaces whatever's in flight, so this is safe to call every time.
   if (isLargeImage(*state.original) && geometryDirty()) {
@@ -113,7 +113,7 @@ static void updateImageFromAdjustments() {
                         state.image->height == state.source->height;
   if (canDefer) {
     updatePreviewFromAdjustments(); // cheap stand-in, shown immediately
-    renderWorker.submit(RenderJob{
+    workers().render.submit(RenderJob{
         state.source, state.adjust.buildRenderParams(), state.source16});
     return;
   }
