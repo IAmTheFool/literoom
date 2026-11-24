@@ -22,9 +22,9 @@ struct ExportRun {
   size_t total = 0, ok = 0, bad = 0, cancelled = 0, shown = 0;
   std::string firstErr, folder;
 };
-static ExportRun exportRun;
+inline ExportRun exportRun;
 
-static bool exportBusy() {
+inline bool exportBusy() {
   if (!workers().exporter.busy())
     return false;
   setStatus("Wait for the export to finish (or use Stop Export)", true);
@@ -33,7 +33,7 @@ static bool exportBusy() {
 
 // The pictures of the strip in strip order, as the filter shows them:
 // only the selected ones, or all of them.
-static std::vector<std::string> exportTargets(bool selectedOnly) {
+inline std::vector<std::string> exportTargets(bool selectedOnly) {
   std::vector<std::string> paths;
   const FilmStrip &f = state.film;
   for (const int i : f.view)
@@ -43,7 +43,7 @@ static std::vector<std::string> exportTargets(bool selectedOnly) {
   return paths;
 }
 
-static void startExportBatch(std::vector<std::string> paths) {
+inline void startExportBatch(std::vector<std::string> paths) {
   if (state.dragging || exportBusy())
     return;
   if (paths.empty()) {
@@ -77,10 +77,10 @@ static void startExportBatch(std::vector<std::string> paths) {
   setStatus("Exporting " + std::to_string(n) + " photo(s)...", false);
 }
 
-static void exportSelected() { startExportBatch(exportTargets(true)); }
-static void exportAllShown() { startExportBatch(exportTargets(false)); }
+inline void exportSelected() { startExportBatch(exportTargets(true)); }
+inline void exportAllShown() { startExportBatch(exportTargets(false)); }
 
-static void stopExport() {
+inline void stopExport() {
   if (workers().exporter.busy()) {
     workers().exporter.cancel();
     setStatus("Stopping the export...", false);
@@ -88,7 +88,7 @@ static void stopExport() {
 }
 
 // Polled once per frame from flushPendingAdjust.
-static void collectExportJob() {
+inline void collectExportJob() {
   if (!exportRun.active)
     return;
   // Ask BEFORE collecting: if the worker was already done, collect() below
@@ -131,4 +131,3 @@ static void collectExportJob() {
                   where,
               false);
 }
-

@@ -20,11 +20,11 @@ struct LutRow {
   std::string warning;       // "may expect camera-log input"; "" if not
   uint64_t paintVersion = 0; // changes whenever what the row shows changes
 };
-static std::vector<LutRow> gLuts;
-static bool gLutsLoaded =
+inline std::vector<LutRow> gLuts;
+inline bool gLutsLoaded =
     false; // the folder was listed since the pane was last opened
-static uint64_t gLutPaintCounter = 0;
-static uint64_t gLutSerial = 0; // the job whose results are taken in
+inline uint64_t gLutPaintCounter = 0;
+inline uint64_t gLutSerial = 0; // the job whose results are taken in
 
 // What the previews were made for: the picture's pixels and the edit state. A
 // change of either makes them stale. The LUTs pane's own changes (choosing a
@@ -35,13 +35,13 @@ struct LutBuilt {
   const CanvasImage *source = nullptr;
   uint64_t version = 0;
 };
-static LutBuilt gLutBuilt;
-static uint64_t gLutCacheEpoch =
+inline LutBuilt gLutBuilt;
+inline uint64_t gLutCacheEpoch =
     1; // bumped when the LUT cache is emptied (see currentLutStatus)
 
 // Empties the library's cache: a LUT file may have changed (an import, another
 // picture).
-static void dropLutCache() {
+inline void dropLutCache() {
   clearLutCache();
   ++gLutCacheEpoch;
 }
@@ -49,7 +49,7 @@ static void dropLutCache() {
 // Lists the library folder afresh. Rows keep what is known about a file that is
 // still there (its preview, size, warning), and the previews are only made
 // again when the list itself changed.
-static void refreshLuts() {
+inline void refreshLuts() {
   std::vector<std::string>
       oldPaths; // taken before the rows are moved from below
   for (const LutRow &o : gLuts)
@@ -84,7 +84,7 @@ static void refreshLuts() {
 
 // Where the open picture's LUT stands in the library. Looked up again only when
 // the edit state or the cache changed (the pane's text asks every frame).
-static LutStatus currentLutStatus() {
+inline LutStatus currentLutStatus() {
   static uint64_t forVersion = 0, forEpoch = 0;
   static LutStatus cached = LutStatus::None;
   if (forVersion != state.adjust.version() || forEpoch != gLutCacheEpoch) {
@@ -98,7 +98,7 @@ static LutStatus currentLutStatus() {
 // Says so in the status bar when the picture's LUT can't be used as it was
 // chosen: gone from the library, damaged, or a file that has changed since.
 // True if it said something.
-static bool noteLutProblem() {
+inline bool noteLutProblem() {
   const std::string name = "\"" + state.adjust.lut().name + "\"";
   switch (currentLutStatus()) {
   case LutStatus::Missing:
@@ -120,27 +120,27 @@ static bool noteLutProblem() {
 
 // "line 3: ..." out of "file.cube: line 3: ..." (the row already names the
 // file).
-static std::string lutReason(const std::string &error) {
+inline std::string lutReason(const std::string &error) {
   const size_t k = error.find(": ");
   return k == std::string::npos ? error : error.substr(k + 2);
 }
 
 // The previews match the picture and its edits as they are right now.
-static bool lutPreviewsCurrent() {
+inline bool lutPreviewsCurrent() {
   return gLutBuilt.valid && gLutBuilt.source == state.source.get() &&
          gLutBuilt.version == state.adjust.version();
 }
 // Call after a change made by the LUTs pane itself (`wasCurrent` =
 // lutPreviewsCurrent() just before it): the previews do not depend on it, so
 // they stay current. An unrelated edit made in between keeps them stale.
-static void lutPreviewsFollow(bool wasCurrent) {
+inline void lutPreviewsFollow(bool wasCurrent) {
   if (wasCurrent)
     gLutBuilt.version = state.adjust.version();
 }
 
 // The LUT Amount slider's setter. The previews show every LUT at 100 %,
 // whatever the amount is, so moving it keeps them current.
-static void setLutAmount(float v) {
+inline void setLutAmount(float v) {
   const bool current = lutPreviewsCurrent();
   state.adjust.set(AdjId::LutAmount, v);
   lutPreviewsFollow(current);
@@ -149,7 +149,7 @@ static void setLutAmount(float v) {
 // Once per frame (flushPendingAdjust): takes in the previews the worker has
 // made, and, with the pane open, starts a new batch when the list or the
 // picture's look has changed since the last.
-static void pollLutPreviews() {
+inline void pollLutPreviews() {
   for (LutPreviewResult &r : workers().lutPreview.collect()) {
     if (r.serial != gLutSerial)
       continue; // a batch that was replaced
@@ -192,7 +192,7 @@ static void pollLutPreviews() {
 
 // Gives the picture the LUT of list row i: one undo step, "LUT: <name>" in
 // History.
-static void applyLutRow(size_t i) {
+inline void applyLutRow(size_t i) {
   if (state.dragging || !state.original || i >= gLuts.size())
     return;
   const LutRow &row = gLuts[i];
@@ -221,7 +221,7 @@ static void applyLutRow(size_t i) {
 
 // Takes the LUT off the picture (and its amount back to 0): one undo step,
 // "Remove LUT".
-static void removeLut() {
+inline void removeLut() {
   if (state.dragging || !state.original)
     return;
   const bool current = lutPreviewsCurrent();
@@ -235,7 +235,7 @@ static void removeLut() {
 
 // Copies .cube files into the library (see importLutFile) and re-lists it; says
 // what happened in the status bar.
-static void importLutPaths(const std::vector<std::string> &files) {
+inline void importLutPaths(const std::vector<std::string> &files) {
   if (files.empty())
     return;
   size_t ok = 0, bad = 0;
@@ -275,13 +275,13 @@ static void importLutPaths(const std::vector<std::string> &files) {
   setStatus(msg, bad > 0);
 }
 
-static void importLuts() {
+inline void importLuts() {
   importLutPaths(openFilesPicker(
       "Import LUTs", {{"3D LUTs", "*.cube"}, {"All Files", "*.*"}}));
 }
 
 // The line under a row's name: the table size, or why the file can't be used.
-static std::string lutRowDetail(size_t i) {
+inline std::string lutRowDetail(size_t i) {
   if (i >= gLuts.size())
     return std::string();
   const LutRow &r = gLuts[i];
@@ -297,7 +297,7 @@ static std::string lutRowDetail(size_t i) {
 }
 
 // What the pane says about the picture's own LUT.
-static std::string lutCurrentText() {
+inline std::string lutCurrentText() {
   const LutRef &r = state.adjust.lut();
   if (r.empty())
     return "No LUT on this picture";
@@ -317,7 +317,7 @@ static std::string lutCurrentText() {
 // "<sidecar>.bak", so that the edits the next autosave replaces it with can't
 // destroy what was in it. An existing .bak is left alone (the first copy is the
 // one worth keeping). True if the copy exists afterwards.
-static bool backUpIgnoredSidecar(const std::filesystem::path &sidecar) {
+inline bool backUpIgnoredSidecar(const std::filesystem::path &sidecar) {
   std::filesystem::path bak = sidecar;
   bak += ".bak";
   std::error_code ec;
@@ -341,7 +341,7 @@ static bool backUpIgnoredSidecar(const std::filesystem::path &sidecar) {
 //    newer Literoom, made for a picture of another size, or its edits don't
 //    parse). It is copied to "<sidecar>.bak" first and the picture opens clean,
 //    as before. Only if even that copy fails does it count as unreadable.
-static void loadSidecar() {
+inline void loadSidecar() {
   state.sidecarSaved = state.adjust.version(); // pristine unless loaded below
   state.meta = PhotoMeta{}; // unrated unless the file says so
   state.metaDirty = false;

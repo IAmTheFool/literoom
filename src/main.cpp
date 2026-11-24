@@ -1,6 +1,11 @@
 // Literoom - the photo editor: UI and glue around the engine headers below.
 
+// LITEROOM_NO_LITEUI_IMPL: set only by tests/odr_second_tu.cpp, the second
+// translation unit of the ODR check (liteui's implementation may be compiled into
+// exactly one TU of a program).
+#ifndef LITEROOM_NO_LITEUI_IMPL
 #define LITEUI_IMPLEMENTATION
+#endif
 #include "liteui.hpp"
 
 #include <algorithm>
@@ -145,6 +150,8 @@ int main() {
   ui.setScaleChangedHandler([&ui] { setDpr(ui.contentScale()); });
   // A finished background job wakes the (otherwise sleeping) event loop.
   workers().setNotify([&ui] { ui.wake(); });
+  // Joins every worker thread when main() is left, before `ui` is destroyed.
+  const WorkersShutdownGuard workersGuard;
 
   installShortcuts(ui);
 
@@ -202,8 +209,8 @@ int main() {
   applyClickCursors(root);
   ui.setRoot(std::move(root));
   ui.run();
-  flushSidecar();            // edits made since the last autosave
-  workers().shutdown();      // join every worker thread before `ui` goes out of
-                             // scope (a decode still running is waited out)
+  flushSidecar(); // edits made since the last autosave
+  // workersGuard joins the worker threads as main() returns, before `ui` is
+  // destroyed (a decode still running is waited out).
   return 0;
 }

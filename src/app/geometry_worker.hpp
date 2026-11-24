@@ -20,7 +20,7 @@
 // never actually independent — but checking both directly, rather than
 // relying on that invariant, means a bug elsewhere fails safe (one wasted
 // resubmit) instead of silently letting a stale in-flight job get adopted.
-static bool geometryDirty() {
+inline bool geometryDirty() {
   if (workers().geometry.outstanding())
     return true;
   if (!state.oriented || !state.rotated)
@@ -37,7 +37,7 @@ static bool geometryDirty() {
   return state.adjust.crop() != state.sourceCrop;
 }
 
-static void submitGeometryJob() {
+inline void submitGeometryJob() {
   workers().geometry.submit(
       GeometryJob{state.original, state.adjust.orient(), state.adjust.angle(),
                   state.adjust.expand(), state.adjust.crop(),
@@ -48,7 +48,7 @@ static void submitGeometryJob() {
 // Swaps in every field of a finished geometry rebuild together, so the
 // picture, its document size, and the crop selection never show a
 // combination that belonged to two different requests.
-static void adoptGeometryBundle(GeometryWorker::Result &&r) {
+inline void adoptGeometryBundle(GeometryWorker::Result &&r) {
   GeometryBundle &b = r.bundle;
   state.oriented = std::move(b.oriented);
   state.orientedFor = b.orientedFor;
@@ -79,7 +79,7 @@ static void adoptGeometryBundle(GeometryWorker::Result &&r) {
 
 // Non-blocking; polled once per frame from flushPendingAdjust, alongside
 // collectFullRender.
-static void collectGeometryJob() {
+inline void collectGeometryJob() {
   try {
     if (auto r = workers().geometry.collect())
       adoptGeometryBundle(std::move(*r));
@@ -89,7 +89,7 @@ static void collectGeometryJob() {
 }
 // Blocking: makes every field a geometry rebuild touches current. For the
 // one place that needs the real pixels *now* (export).
-static void finishGeometryJob() {
+inline void finishGeometryJob() {
   if (!workers().geometry.outstanding())
     return;
 
@@ -125,4 +125,4 @@ static void finishGeometryJob() {
 // edit that measures against them (a second rotate remapping the crop rect,
 // Apply Crop reading the selection) would compute from stale sizes. Those
 // edits are ignored while this is true; their buttons are dimmed to match.
-static bool geometryBusy() { return workers().geometry.outstanding(); }
+inline bool geometryBusy() { return workers().geometry.outstanding(); }

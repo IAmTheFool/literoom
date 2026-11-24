@@ -21,6 +21,7 @@ endif()
 option(LITEROOM_ONNX     "literoom: object selection via ONNX Runtime" OFF)
 option(LITEROOM_TESTS    "literoom: build unit tests (Catch2)" ON)
 option(LITEROOM_SANITIZE "literoom: build the tests with AddressSanitizer" OFF)
+option(LITEROOM_ODR_TEST "literoom: build the one-definition check (compiles the whole app twice)" ON)
 set(ONNXRUNTIME_DIR "" CACHE PATH
     "Unpacked onnxruntime release (the folder containing include/ and lib/)")
 
@@ -333,5 +334,39 @@ if(LITEROOM_TESTS)
     set_tests_properties(literoom_lut_pane PROPERTIES LABELS threaded TIMEOUT 120)
     if(_lut_pane_env)
         set_tests_properties(literoom_lut_pane PROPERTIES ENVIRONMENT "${_lut_pane_env}")
+    endif()
+
+    # ---- odr: one object per shared thing, however many .cpp files include the app ----
+    # src/app/*.hpp are meant to be included by main.cpp only, but nothing stops a
+    # second .cpp from including them, and a `static` object or function in a header
+    # is one COPY PER .cpp (two render workers, two `state`s, ...). They are `inline`
+    # now; this test keeps it that way. It is an executable of two translation units:
+    #   tests/odr_first_tu.cpp   includes src/main.cpp (main() renamed) and has the real
+    #                            main(): it compares what both units see
+    #   tests/odr_second_tu.cpp  includes src/main.cpp again, without the liteui
+    #                            implementation (-> LITEROOM_NO_LITEUI_IMPL)
+    # Two failures are possible, and both are the point:
+    #   * link error "multiple definition of ...": something in a header is neither
+    #     `static` nor `inline` (a plain function or variable definition);
+    #   * "TWO COPIES" at run time: a `static` came back into a header.
+    # Fix either by making the definition `inline` (see tools/inlinify_headers.py).
+    # Compiles the whole app twice, so it is the slowest target after the editor
+    # itself: -DLITEROOM_ODR_TEST=OFF skips it for quick local builds. CI keeps it ON.
+    # Never sanitized: it runs no editor code, only compares addresses.
+    if(LITEROOM_ODR_TEST)
+        add_executable(literoom_odr_test
+            tests/odr_first_tu.cpp
+            tests/odr_second_tu.cpp
+            tests/odr_probe.hpp)
+        target_include_directories(literoom_odr_test PRIVATE ${LITEROOM_SRC}
+                                                             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        target_compile_features(literoom_odr_test PRIVATE cxx_std_23)
+        target_link_libraries(literoom_odr_test PRIVATE liteui::liteui Threads::Threads)
+        if(MSVC)
+            target_compile_options(literoom_odr_test PRIVATE /utf-8 /bigobj)
+        endif()
+
+        add_test(NAME literoom_odr COMMAND literoom_odr_test)
+        set_tests_properties(literoom_odr PROPERTIES LABELS odr TIMEOUT 60)
     endif()
 endif()

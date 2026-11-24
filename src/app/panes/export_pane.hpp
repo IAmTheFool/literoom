@@ -163,9 +163,9 @@ static View buildExportPane() {
   batchOptions.style.margin = EdgeInsets{12, 0, 0, 0};
   Text batchHint;
   batchHint.label = std::function<std::string()>([]() -> std::string {
-    if (exportWorker.busy())
-      return "Exporting " + std::to_string(exportWorker.done()) + " of " +
-             std::to_string(exportWorker.total()) + "...";
+    if (workers().exporter.busy())
+      return "Exporting " + std::to_string(workers().exporter.done()) + " of " +
+             std::to_string(workers().exporter.total()) + "...";
     return "Batch: exports the picked filmstrip photos (Ctrl+click, "
            "Shift+click) to one folder, each with its own edits.";
   });
@@ -178,14 +178,14 @@ static View buildExportPane() {
       [] { return state.exportOverwrite; }));
   batchOptions.addChild(
       sidebarButton("Export Selected...", exportSelected, {}, true, [] {
-        return !state.film.files.empty() && !exportWorker.busy();
+        return !state.film.files.empty() && !workers().exporter.busy();
       }));
   batchOptions.addChild(
       sidebarButton("Export All Shown...", exportAllShown, {}, false, [] {
-        return !state.film.files.empty() && !exportWorker.busy();
+        return !state.film.files.empty() && !workers().exporter.busy();
       }));
   batchOptions.addChild(sidebarButton("Stop Export", stopExport, {}, false,
-                                      [] { return exportWorker.busy(); }));
+                                      [] { return workers().exporter.busy(); }));
   exportPane.addChild(std::move(batchOptions));
 
   return exportPane;

@@ -85,27 +85,26 @@ struct Workers {
   }
 };
 
-// The one Workers of the program (created on first use, thread-safe). This is
-// the step-1 shape: `state` is still a global too. Step 2 moves both into an App
-// that main() owns and passes down, and this accessor goes away.
+// The one Workers of the program (created on first use, thread-safe). `state` is
+// still a global too; if the editor ever needs several of either (tests, several
+// windows), both would move into an App that main() owns and passes down.
 inline Workers &workers() {
   static Workers instance;
   return instance;
 }
 
+// Declare one of these in main() right after the window and the notify wiring.
+// Its destructor joins every worker thread when main() is left (normally, or by
+// an exception), before the window that the notify callback captured is
+// destroyed: members are destroyed in reverse order of declaration, so a guard
+// declared after the window always goes first. No worker thread can then call
+// ui.wake() on a dead window, and nothing has to remember a shutdown call.
+struct WorkersShutdownGuard {
+  WorkersShutdownGuard() = default;
+  WorkersShutdownGuard(const WorkersShutdownGuard &) = delete;
+  WorkersShutdownGuard &operator=(const WorkersShutdownGuard &) = delete;
+  ~WorkersShutdownGuard() { workers().shutdown(); }
+};
+
 // The segmentation engine's label for the Object panel (any thread).
 inline std::string getSegInfo() { return workers().sam.info(); }
-
-// ---- Transitional aliases -------------------------------------------------
-// The old global names, now references into the one Workers, so code that has
-// not been migrated yet keeps compiling. Delete each line when its last use is
-// gone (find them with: grep -n "renderWorker" etc.). New code uses
-// workers().render and friends.
-inline RenderWorker &renderWorker = workers().render;
-inline GeometryWorker &geometryWorker = workers().geometry;
-inline DecodeWorker &decodeWorker = workers().decode;
-inline SegmentWorker &segmentWorker = workers().segment;
-inline SyncWorker &syncWorker = workers().sync;
-inline ExportWorker &exportWorker = workers().exporter;
-inline ThumbWorker &thumbWorker = workers().thumb;
-inline LutPreviewWorker &lutPreviewWorker = workers().lutPreview;

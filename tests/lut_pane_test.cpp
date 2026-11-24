@@ -403,7 +403,7 @@ static void testLutPane()
   CHECK(!noteLutProblem() && currentLutStatus() == LutStatus::None);
 
   // ---- clean up ----
-  lutPreviewWorker.cancel();
+  workers().lutPreview.cancel();
   lutDirOverride().clear();
   dropLutCache();
 }
@@ -411,6 +411,6 @@ static void testLutPane()
 int main()
 {
   testLutPane();
-  lutPreviewWorker.shutdown();
+  workers().lutPreview.shutdown();
   return finish();
 }

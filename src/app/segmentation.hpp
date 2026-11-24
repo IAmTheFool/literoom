@@ -12,7 +12,7 @@
 // UI thread: commits a finished segmentation. Prompts and map land in ONE
 // undo step. A result for a mask/part that is gone (deleted, undone away) is
 // dropped.
-static void adoptSegment(SegmentWorker::Result &&r) {
+inline void adoptSegment(SegmentWorker::Result &&r) {
 
   if (r.req.prefetch) {
     if (!r.error.empty())
@@ -51,12 +51,12 @@ static void adoptSegment(SegmentWorker::Result &&r) {
 }
 
 // Polled once per frame from flushPendingAdjust.
-static void collectSegmentJob() {
+inline void collectSegmentJob() {
   if (auto r = workers().segment.collect())
     adoptSegment(std::move(*r));
 }
 
 // Swaps a finished decode into the editor (UI thread only).
-static void filmMarkEdited(const std::string &path); // filmstrip (below)
-static int filmViewPos(int i);                       // filmstrip (below)
-static void filmApplyMeta(const std::string &path, const PhotoMeta &m); // ditto
+inline void filmMarkEdited(const std::string &path); // filmstrip (below)
+inline int filmViewPos(int i);                       // filmstrip (below)
+inline void filmApplyMeta(const std::string &path, const PhotoMeta &m); // ditto

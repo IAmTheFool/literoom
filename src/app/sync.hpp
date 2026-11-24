@@ -12,7 +12,7 @@
 #pragma once
 
 // True (with a status message) while a sync is running.
-static bool syncBusy() {
+inline bool syncBusy() {
   if (!workers().sync.outstanding())
     return false;
   setStatus("Wait for the sync to finish", true);
@@ -20,7 +20,7 @@ static bool syncBusy() {
 }
 
 // Polled once per frame from flushPendingAdjust.
-static void collectSyncJob() {
+inline void collectSyncJob() {
   auto r = workers().sync.collect();
   if (!r)
     return;
@@ -54,7 +54,7 @@ static void collectSyncJob() {
 }
 
 // Image > Sync Settings to Selected.
-static void syncSettings() {
+inline void syncSettings() {
   if (state.dragging || !state.original || syncBusy())
     return;
   const FilmStrip &f = state.film;

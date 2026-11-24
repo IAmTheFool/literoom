@@ -19,13 +19,13 @@
 // not saved, but what is saved is the NEWEST history step (latestToJson), so
 // stepping back to "Original" and closing the app keeps the edits above it.
 
-static std::filesystem::path sidecarPath(const std::string &imagePath) {
+inline std::filesystem::path sidecarPath(const std::string &imagePath) {
   return sidecarFilePath(imagePath); // io/sidecar_file.hpp: the one definition
 }
 
 // A picture's name for messages and the title bar: a virtual copy shows as
 // "photo.jpg [Copy 2]".
-static std::string pictureLabel(const std::string &path) {
+inline std::string pictureLabel(const std::string &path) {
   std::string s = baseName(vcImageOf(path));
   if (const int n = vcCopyOf(path); n > 0)
     s += " [Copy " + std::to_string(n) + "]";
@@ -38,7 +38,7 @@ static std::string pictureLabel(const std::string &path) {
 // on the UI thread, which is a fraction of a millisecond; nothing here touches
 // the render pipeline. A picture with no readable camera data (a PNG, a JPEG
 // without EXIF) gives an empty PhotoInfo.
-static const exif::PhotoInfo &currentPhotoInfo() {
+inline const exif::PhotoInfo &currentPhotoInfo() {
   if (state.photoInfoSerial != state.imageSerial) {
     state.photoInfoSerial = state.imageSerial;
     state.photoInfo = exif::PhotoInfo{};
@@ -52,7 +52,7 @@ static const exif::PhotoInfo &currentPhotoInfo() {
 // bar: read once per opened picture, like currentPhotoInfo (a PNG's color
 // chunks, or a JPEG's ICC profile). The editor converts nothing: it edits the
 // file's numbers as they are and carries the tag into PNG exports.
-static const color_tag::ColorTag &currentColorTag() {
+inline const color_tag::ColorTag &currentColorTag() {
   if (state.colorTagSerial != state.imageSerial) {
     state.colorTagSerial = state.imageSerial;
     state.colorTag = color_tag::ColorTag{};
@@ -68,7 +68,7 @@ static const color_tag::ColorTag &currentColorTag() {
 // Short on purpose: setStatus cuts a message at 110 characters, and "Color:
 // <profile> (embedded profile, not sRGB)" is already about 50 to 90 of them, so
 // the part that matters comes first and the rest is brief.
-static void announceColorTag() {
+inline void announceColorTag() {
   const color_tag::ColorTag &tag = currentColorTag();
   if (tag.text.empty())
     return; // the file could not be read
@@ -81,7 +81,7 @@ static void announceColorTag() {
 // Writes the sidecar for the open picture. On failure (read-only folder...)
 // the status bar says so; the change still counts as "seen" so a failing
 // disk isn't retried every frame, only on the next edit.
-static void saveSidecar() {
+inline void saveSidecar() {
   if (!state.original || state.imagePath.empty())
     return;
   const bool editsChanged = state.adjust.version() != state.sidecarSaved;
@@ -131,7 +131,7 @@ static void saveSidecar() {
 }
 
 // Saves now if anything changed since the last save / load.
-static void flushSidecar() {
+inline void flushSidecar() {
   if (state.original && (state.adjust.version() != state.sidecarSaved ||
                          state.metaDirty || state.snapshotsDirty))
     saveSidecar();
@@ -139,7 +139,7 @@ static void flushSidecar() {
 
 // Per frame: saves a finished change, but not while the mouse is still
 // dragging a slider or a mask (that would write on every frame).
-static void autosaveSidecar() {
+inline void autosaveSidecar() {
   if (!state.original || (state.adjust.version() == state.sidecarSaved &&
                           !state.metaDirty && !state.snapshotsDirty))
     return;

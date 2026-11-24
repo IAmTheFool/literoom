@@ -4,8 +4,8 @@ Reference for every header under `src/app/`, the UI shell of Literoom: the code 
 
 ## How these files fit together
 
-- **One translation unit.** Every file is a `#pragma once` header that only `main.cpp` includes, in the fixed order of the [include order](#include-order) table. They are **not self-contained**: each one uses what the files before it define, and a few functions are forward-declared (listed in the entry that declares them). `tests/golden_render_test.cpp` and `tests/lut_pane_test.cpp` compile `main.cpp` itself, so they pick these files up through it.
-- **What is left in `main.cpp`:** the program's includes, `int main()` and nothing else. `main()` creates the window, wires one notify callback for every worker (`workers().setNotify`) to `LiteUI::wake`, calls `installShortcuts`, assembles the pieces of the [window shell](#window-shell-shell) in order, runs the event loop, flushes the open picture's sidecar and calls `workers().shutdown()`.
+- **One translation unit.** Every file is a `#pragma once` header that only `main.cpp` includes, in the fixed order of the [include order](#include-order) table. They are **not self-contained**: each one uses what the files before it define, and a few functions are forward-declared (listed in the entry that declares them). `tests/golden_render_test.cpp` and `tests/lut_pane_test.cpp` compile `main.cpp` itself, so they pick these files up through it. **Linkage.** Functions and variables are being moved from `static` to `inline`, so that each is one entity however many translation units include its header (the reasoning is in [`workers.hpp`](#workershpp)). Done, and shown as `inline` in their entries: `editor_state.hpp`, `workers.hpp`, `render_update.hpp`, `geometry_worker.hpp`, `segmentation.hpp`, `saved_edits.hpp`, `lut_pane.hpp`, `sync.hpp`, `export.hpp`, `filmstrip.hpp`, and `adoptDecoded` / `collectDecodeJob` in `meta_commands.hpp`. `virtual_copies.hpp`, `canvas_view.hpp`, `crop.hpp`, `panes/export_pane.hpp` and the other commands of `meta_commands.hpp` are checked and still `static` in the source; the entries of the files not named here have not been re-checked and still show `static`.
+- **What is left in `main.cpp`:** the program's includes, the `LITEUI_IMPLEMENTATION` define and `int main()`. The define is skipped when `LITEROOM_NO_LITEUI_IMPL` is set, which only `tests/odr_second_tu.cpp` (the second translation unit of the ODR check) does, because LiteUI's implementation may be compiled into exactly one translation unit. `main()` runs `verifyAdjustmentSpecs()`, creates the window (title bar hidden), sets the display scale (`setDpr(ui.contentScale())`, and again from a scale-changed handler when the window moves between monitors), wires one notify callback for every worker (`workers().setNotify`) to `LiteUI::wake`, declares a `WorkersShutdownGuard`, calls `installShortcuts`, builds the `activities` table (the 13 panes, in activity-bar order), assembles the pieces of the [window shell](#window-shell-shell) in order (title bar; a workspace row of activity bar, sidebar, sidebar divider, centre column and mask panel; status bar), runs `applyClickCursors` over the finished tree, runs the event loop, and then flushes the open picture's sidecar. It does **not** call `workers().shutdown()` itself: the guard's destructor joins the worker threads as `main()` returns, before the window is destroyed (a decode still running is waited out).
 - **Two shared objects.** `state` (`EditorState`, [editor_state.hpp](#editor_statehpp)) is the editor's model: the picture at every stage, the edits (`state.adjust`), the view, the filmstrip, the crop and mask tool state. `uiState` (`UiState`, [ui_state.hpp](#ui_statehpp)) is the UI-only part: selected tabs, list selections, clipboards. Almost every file reads and writes them, so the **Depends on** lines below leave out `editor_state.hpp`, `ui_state.hpp` and `constants.hpp`.
 - **Pane code is built once.** The view tree is created at startup. A pane is always in the tree and shows itself only while its activity is selected, through style and label lambdas that LiteUI re-evaluates after every event; lists (masks, presets, LUTs, snapshots, history) are a fixed number of row slots that each show themselves only for an index that exists. Nothing rebuilds views at run time.
 
@@ -57,7 +57,7 @@ Each entry follows [headers.md](headers.md): a short description, a **Depends on
 ## Foundations
 
 ### `constants.hpp`
-Every fixed number and color the UI uses, in one place: layout sizes (title bar, status bar, activity bar, sidebar and mask-panel widths), the zoom range, the crop / curve / histogram / mask-overlay sizes, the activity ids and row counts of the list panes, and the dark palette with its semantic names. Plus the `Activity` struct and the display color of each Color Mixer band. Nothing here changes at run time. The engine's own constants live next to their algorithms (`color_mix.hpp`, `histogram.hpp`, `mask_geom.hpp`, ...); this file holds only what the window needs.
+Every fixed number and color the UI uses, in one place: layout sizes (title bar, status bar, activity bar, sidebar and mask-panel widths), the zoom range, the crop / curve / histogram / mask-overlay sizes, the activity ids and row counts of the list panes, and the dark palette with its semantic names. Plus the `Activity` struct and the display color of each Color Mixer band. Nothing here changes at run time. The engine's own constants live next to their algorithms (`color_mix.hpp`, `histogram.hpp`, `mask_geom.hpp`, ...); this file holds only what the window needs. The activity ids that `main()`'s table and `state.activeActivity` use by name (`kInfoActivity`, `kAdjustActivity`, `kCurveActivity`, `kColorMixActivity`, `kColorGradingActivity`, `kMasksActivity`, `kCropActivity`, `kRotateActivity`, `kExportActivity`, and `kNoActivity`, the value while the sidebar is closed) are defined before `editor_state.hpp`; the tables below list only the ones added later (History, Presets, Snapshots, LUTs).
 
 **Depends on:** engine: `color_mix.hpp`, `lut_library.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
@@ -290,7 +290,7 @@ Every background worker of the editor, owned in one place. Before this, each wor
   | `sam` | `SamEngine` | | The segmentation engine, **declared first** because `segment` borrows it. |
   | `render` | `RenderWorker` | `runRenderJob` | |
   | `geometry` | `GeometryWorker` | `runGeometryJob` | |
-  | `decode` | `DecodeWorker` | `runDecodeJob` | Also remembers the pending path (`pendingPath()`). |
+  | `decode` | `DecodeWorker` | its default function | Also remembers the pending path (`pendingPath()`). |
   | `segment` | `SegmentWorker` | a lambda calling `runSegmentJob(sam, req, c)` | The one place the engine is bound to the job. |
   | `sync` | `SyncWorker` | `runSyncJob` | Also does the batch rating. |
   | `exporter` | `ExportWorker` | its default function (`exportPicture`) | |
@@ -301,14 +301,15 @@ Every background worker of the editor, owned in one place. Before this, each wor
   - `void setNotify(const std::function<void()> &wake)`: one callback for all eight workers; a finished job wakes the (otherwise sleeping) event loop. Safe to call at any time (each worker copies it under its own lock); normally once at startup (`main()` passes `ui.wake()`).
   - `void shutdown()`: stops and joins every worker thread, in this order: `render` (abandons the render in flight), `geometry` (ditto), `decode` (**waits out a decode still running**, which can't be cancelled), `thumb`, `segment`, `sync` (**finishes the batch it is writing**), `exporter` (abandons the picture it is rendering), `lutPreview`. After it no notify callback runs again. Idempotent; the destructor calls it too.
 
+- `struct WorkersShutdownGuard` (non-copyable): `main()` declares one right after the window and the notify wiring. Its destructor calls `workers().shutdown()`, so every worker thread is joined when `main()` is left, normally or by an exception, before the window that the notify callback captured is destroyed (members are destroyed in reverse order of declaration, so a guard declared after the window goes first). No worker thread can then call `ui.wake()` on a dead window, and nothing has to remember a shutdown call.
+
 **State and tables**
 
 - The one instance is a function-local static inside `workers()`.
-- **Transitional aliases**: `renderWorker`, `geometryWorker`, `decodeWorker`, `segmentWorker`, `syncWorker`, `exportWorker`, `thumbWorker`, `lutPreviewWorker`, each an `inline` reference into the one `Workers` (so `exportWorker` is `workers().exporter`), kept so code that has not been migrated keeps compiling. New code uses `workers().render` and friends; each alias is to be deleted when its last use is gone.
 
 **Functions**
 
-**`inline Workers &workers()`**: the one `Workers` of the program, created on first use (thread-safe). This is the "step 1" shape: `state` is still a global too. The plan is to move both into an `App` that `main()` owns and passes down, after which this accessor goes away.
+**`inline Workers &workers()`**: the one `Workers` of the program, created on first use (thread-safe). `state` is still a global too; if the editor ever needs several of either (tests, several windows), both would move into an `App` that `main()` owns and passes down.
 
 **`inline std::string getSegInfo()`**: the segmentation engine's label for the Object panel (`workers().sam.info()`); any thread. It replaces the old mutex-guarded `gSegInfo` global.
 
@@ -508,7 +509,7 @@ Selection-drag "handle" bitmask: which edges of the selection a drag is moving. 
   | `maskShowTint` | `bool` | `false` | paint the selected mask's weight in the overlay color |
   | `maskTintColor` | `int` | `0` | index into kMaskTintPalette (session only, not saved) |
   | `mask` | `MaskUi` |  |  |
-  | `activeActivity` | `int` | `0` | -1 = sidebar closed |
+  | `activeActivity` | `int` | `kInfoActivity` | `kNoActivity` = sidebar closed |
   | `sidebarWidth` | `float` | `220.0f` |  |
   | `maskPanelW` | `float` | `300.0f` | right-hand mask panel (Masks pane only) |
   | `maskTab` | `int` | `0` | its tab: 0 Effect, 1 Shape, 2 Parts |
@@ -564,16 +565,16 @@ Selection-drag "handle" bitmask: which edges of the selection a drag is moving. 
 
 **State and tables**
 
-- `kCropAspects`: `static const std::array<CropAspect, 6>`, initially `{{ {"Free", 0.0f}, {"Original", -1.0f}, {"1:1", 1.0f}, {"4:3", 4.0f /…`
-- `state`: `static EditorState`
+- `kCropAspects`: `inline const std::array<CropAspect, 6>`, initially `{{ {"Free", 0.0f}, {"Original", -1.0f}, {"1:1", 1.0f}, {"4:3", 4.0f /…`
+- `state`: `inline EditorState`
 
 **Functions**
 
-**`static void setStatus(std::string msg, bool isError)`**: Shows `msg` in the status bar. Kept to one short line: newlines (library error strings sometimes have them) become spaces, and long text is cut on a UTF-8 boundary with an ellipsis.
+**`inline void setStatus(std::string msg, bool isError)`**: Shows `msg` in the status bar. Kept to one short line: newlines (library error strings sometimes have them) become spaces, and long text is cut on a UTF-8 boundary with an ellipsis.
 
-**`static void clearStatus()`**: Empties the status-bar message and its error flag. Called by every action that makes an earlier message stale (the next open, export or edit).
+**`inline void clearStatus()`**: Empties the status-bar message and its error flag. Called by every action that makes an earlier message stale (the next open, export or edit).
 
-**`static void applyZoomDev(float zoomDev)`**: Sets the zoom from a device-pixel zoom (1.0 = 100%, pixel-exact) and derives the logical scale everything else uses. Does not mark dirty.
+**`inline void applyZoomDev(float zoomDev)`**: Sets the zoom from a device-pixel zoom (1.0 = 100%, pixel-exact) and derives the logical scale everything else uses. Does not mark dirty.
 
 ### `ui_state.hpp`
 UI-only state, the part of the old pile of `g...` globals that is just "how the UI is currently showing things": which tab is selected, which list row was clicked, the Copy Settings clipboard, the name fields' text states and the curve editors' selected points. Kept separate from `EditorState` on purpose: nothing in it is an edit or part of the picture. One instance, `uiState`. UI thread only. It also owns the three **reset helpers** that keep a stored index from pointing at something that no longer exists (a new picture, undo, a different mask).
@@ -741,6 +742,8 @@ The canvas view: where the picture sits inside the canvas and how the user moves
 - `static void submitGeometryJob()`
 - `static void announceColorTag()`
 
+These five are declared `static` here, but `updatePreviewFromAdjustments` (`render_update.hpp`), `geometryDirty` and `submitGeometryJob` (`geometry_worker.hpp`) and `announceColorTag` (`saved_edits.hpp`) are defined `inline`. A `static` declaration followed by a definition without `static` keeps internal linkage, so until these four declarations say `inline` they remain a separate function in every translation unit, which is what the `static` to `inline` move is meant to end. `syncSource` is not affected: it is `static` both here and in `crop.hpp`.
+
 **Functions**
 
 **`static ViewGeo viewGeo(bool clampScroll = true)`**: **Input:** `clampScroll` (default true). **Returns:** the `ViewGeo` for the current zoom and canvas size: `W`/`H` = picture size on screen, `cw`/`ch` = that plus `kViewPad` on every side, a bar is needed on an axis when the content is more than 0.5 larger than the canvas, `maxX`/`maxY` = the largest scroll offsets, and `baseX`/`baseY` = the picture origin at scroll 0 (centered when there is no bar on that axis, else `kViewPad`). With `clampScroll` it also pulls `state.view.scrollX/Y` back into `[0, max]`, because the picture can change size under the view (crop, rotate, new zoom). Pass `false` to read the geometry without moving the scroll.
@@ -774,25 +777,25 @@ Keeps `state.image` (what is drawn and exported) up to date with `state.adjust`.
 
 **Functions**
 
-**`static void adoptFullRender(RenderWorker::Result &&r)`**: **Input:** the worker's `RenderWorker::Result`. Makes its image `state.image`, drops the stand-in `previewImage`, marks the histogram stale and the canvas dirty.
+**`inline void adoptFullRender(RenderWorker::Result &&r)`**: **Input:** the worker's `RenderWorker::Result`. Makes its image `state.image`, drops the stand-in `previewImage`, marks the histogram stale and the canvas dirty.
 
-**`static void collectFullRender()`**: Non-blocking: asks `workers().render.collect()` for a finished, still-current result and adopts it. Polled once per frame from `flushPendingAdjust`. If the render job threw, `collect()` rethrows it here and this catches a `std::exception`, showing "Render failed: <reason>" as an error in the status bar (a non-`std::exception` throw is not caught here).
+**`inline void collectFullRender()`**: Non-blocking: asks `workers().render.collect()` for a finished, still-current result and adopts it. Polled once per frame from `flushPendingAdjust`. If the render job threw, `collect()` rethrows it here and this catches a `std::exception`, showing "Render failed: <reason>" as an error in the status bar (a non-`std::exception` throw is not caught here).
 
-**`static void finishFullRender()`**: Blocking: if a render is outstanding, waits for it (`waitForLatest`) and acts on its `WaitStatus`, so `state.image` is current when it returns. For the few callers that need the real pixels *now* (export). Returns at once when nothing is outstanding.
+**`inline void finishFullRender()`**: Blocking: if a render is outstanding, waits for it (`waitForLatest`) and acts on its `WaitStatus`, so `state.image` is current when it returns. For the few callers that need the real pixels *now* (export). Returns at once when nothing is outstanding.
 - `completed`: adopts the image (`adoptFullRender`); a `completed` status with no value throws `std::logic_error`.
 - `cancelled` (superseded, invalidated or abandoned): adopts nothing and **throws** `std::runtime_error("Render was cancelled before it completed")`, so the caller must not assume `state.image` was refreshed.
 - `failed`: rethrows the job's exception (or throws `std::runtime_error` if there is none).
 
-**`static void enterDrag(bool isAngle)`**: **Input:** whether the drag is the angle slider. A drag starts (or continues) on the preview path. If it is a new drag, any full-resolution render in flight is invalidated, because it is for values the drag is about to change. Sets `state.dragging` and `state.dragIsAngle`, which switches recompute and paint to the preview path.
+**`inline void enterDrag(bool isAngle)`**: **Input:** whether the drag is the angle slider. A drag starts (or continues) on the preview path. If it is a new drag, any full-resolution render in flight is invalidated, because it is for values the drag is about to change. Sets `state.dragging` and `state.dragIsAngle`, which switches recompute and paint to the preview path.
 
-**`static void updateImageFromAdjustments()`**
+**`inline void updateImageFromAdjustments()`**
 Rebuilds `state.image` from the untouched `state.source` pixels with the current adjustment values. Called after every change to `state.adjust`: a slider drag, undo, redo, a crop, opening a picture.
 - Does nothing until a picture is open. Clears the status message and `colorNoticePending`, and invalidates any render in flight.
 - **Geometry on the worker:** on a large picture (`isLargeImage`) with a pending orient / straighten / crop change (`geometryDirty()`), it calls `submitGeometryJob()` and returns; the current picture stays on screen until the geometry bundle lands (see `geometry_worker.hpp`).
 - Otherwise `syncSource(false)` picks up a crop change from apply / undo / redo. If `source` did not change, a preview base exists and `image` still has the source's size, it takes the **deferred path**: render the preview now (`updatePreviewFromAdjustments`) so the picture updates immediately, and `workers().render.submit(RenderJob{source, buildRenderParams(), source16})` for the full-resolution result. `paintCanvas` keeps showing the preview (`EditorState::showPreview`) until it arrives.
 - Otherwise the **synchronous path**: render into `state.image` now (from the 16-bit twin with `renderToDisplay`, else `renderAdjusted`), drop the preview and the preview document size, mark the histogram stale and the canvas dirty. Used for small pictures, where the pass is faster than the hand-off, and for any change that alters the picture's geometry, because then `source`, `image`, the document size and the crop selection must all change together.
 
-**`static void updatePreviewFromAdjustments()`**: Like `updateImageFromAdjustments()` but applied to the small preview base (from its 16-bit twin if there is one). Only touches `state.previewImage` (and marks the histogram stale and the canvas dirty); `state.image`, the document size, export and the info labels are left alone until the drag ends. No-op when there is no preview base (a small picture just uses the full path).
+**`inline void updatePreviewFromAdjustments()`**: Like `updateImageFromAdjustments()` but applied to the small preview base (from its 16-bit twin if there is one). Only touches `state.previewImage` (and marks the histogram stale and the canvas dirty); `state.image`, the document size, export and the info labels are left alone until the drag ends. No-op when there is no preview base (a small picture just uses the full path).
 
 ## Crop, geometry and rotation
 
@@ -803,7 +806,7 @@ The crop selection helpers, all on `state.crop` (the live selection) and `state.
 
 **Functions**
 
-**`static bool cropToolActive()`**: True while the Crop pane (activity 2) is open and a picture is loaded. The selection is only shown and edited then.
+**`static bool cropToolActive()`**: True while the Crop pane (`activeActivity == kCropActivity`) is open and a picture is loaded (`state.image` is set). The selection is only shown and edited then.
 
 **`static float cropAspect()`**: **Returns** the width / height ratio the selection is locked to, or 0 for free-form. A positive table ratio is returned as is; the "Original" entry (negative ratio) returns the aspect of the picture being cropped (`source` width / height, or 0 if there is none).
 
@@ -814,7 +817,7 @@ The crop selection helpers, all on `state.crop` (the live selection) and `state.
 **`static void setCropAspect(size_t idx)`**: **Input:** an index into `kCropAspects`. Stores it in `state.crop.aspectIdx`, re-fits the selection to the new lock and repaints.
 
 **`static void syncSource(bool force)`**
-**Input:** `force`, true when a new picture is opened. Rebuilds the stages that no longer match `state.adjust`, in order:
+**Input:** `force`, true when a new picture is opened. Does nothing at all without `state.original`. Rebuilds the stages that no longer match `state.adjust`, in order:
 - **oriented** (rotate / flip) when the orientation changed or `force`: also its 16-bit twin and `orientedPreview` (a downsampled copy for live angle drags).
 - **rotated** (straighten) when the orientation or the angle changed, or the corner mode changed while the angle is not 0 (the corner mode only matters when there is an angle). Equal to `oriented` at angle 0.
 - **source**: `rotated` with the committed crop applied (or `rotated` itself if there is no crop), its 16-bit twin, and a new `previewBase` / `previewBase16`; the preview image is dropped.
@@ -828,17 +831,17 @@ The UI-thread glue of the geometry worker. The job (`GeometryJob`, `GeometryBund
 
 **Functions**
 
-**`static bool geometryDirty()`**: True when the committed orientation / angle / corner mode / crop in `state.adjust` hasn't been rendered into `state.oriented` / `rotated` / `source` yet. Mirrors `syncSource`'s own dirty checks as a read-only predicate (no rebuilding). Also true while a geometry job is outstanding or while `oriented` / `rotated` are missing; checking both directly means a bug elsewhere fails safe (one wasted resubmit) instead of adopting a stale in-flight job.
+**`inline bool geometryDirty()`**: True when the committed orientation / angle / corner mode / crop in `state.adjust` hasn't been rendered into `state.oriented` / `rotated` / `source` yet. Mirrors `syncSource`'s own dirty checks as a read-only predicate (no rebuilding). Also true while a geometry job is outstanding or while `oriented` / `rotated` are missing; checking both directly means a bug elsewhere fails safe (one wasted resubmit) instead of adopting a stale in-flight job.
 
-**`static void submitGeometryJob()`**: Snapshots the current `original`, orientation, angle, corner mode, crop, `RenderParams` and 16-bit original into a `GeometryJob`, submits it (superseding any job in flight) and shows "Applying changes..." in the status bar.
+**`inline void submitGeometryJob()`**: Snapshots the current `original`, orientation, angle, corner mode, crop, `RenderParams` and 16-bit original into a `GeometryJob`, submits it (superseding any job in flight) and shows "Applying changes..." in the status bar.
 
-**`static void adoptGeometryBundle(GeometryWorker::Result &&r)`**: **Input:** a finished result. Swaps in every field of the bundle together (`oriented`, `rotated`, `source`, `previewBase`, the 16-bit twins, `image`, ...), so the picture, its document size and the crop selection never show a combination that belonged to two different requests. Then drops the preview image and preview document size, resets the crop selection to the new source, marks the histogram stale, clears the "Applying changes..." message, re-announces a freshly opened picture's color notice if it was pending (`colorNoticePending`) and repaints.
+**`inline void adoptGeometryBundle(GeometryWorker::Result &&r)`**: **Input:** a finished result. Swaps in every field of the bundle together (`oriented`, `rotated`, `source`, `previewBase`, the 16-bit twins, `image`, ...), so the picture, its document size and the crop selection never show a combination that belonged to two different requests. Then drops the preview image and preview document size, resets the crop selection to the new source, marks the histogram stale, clears the "Applying changes..." message, re-announces a freshly opened picture's color notice if it was pending (`colorNoticePending`) and repaints.
 
-**`static void collectGeometryJob()`**: Non-blocking; polled once per frame from `flushPendingAdjust`, alongside `collectFullRender`. Adopts a finished bundle (`adoptGeometryBundle`). If the job threw, `collect()` rethrows and this catches a `std::exception`, showing "Rebuild failed: <reason>" as an error in the status bar (a non-`std::exception` throw is not caught here).
+**`inline void collectGeometryJob()`**: Non-blocking; polled once per frame from `flushPendingAdjust`, alongside `collectFullRender`. Adopts a finished bundle (`adoptGeometryBundle`). If the job threw, `collect()` rethrows and this catches a `std::exception`, showing "Rebuild failed: <reason>" as an error in the status bar (a non-`std::exception` throw is not caught here).
 
-**`static void finishGeometryJob()`**: Blocking: makes every field a geometry rebuild touches current. For the one place that needs the real pixels *now* (export). Returns at once when nothing is outstanding; otherwise it `waitForLatest()`s and acts on the `WaitStatus`: `completed` adopts the bundle (a missing value throws `std::logic_error`); `cancelled` adopts nothing, so no geometry field is updated half-way, and **throws** `std::runtime_error("Geometry rebuild was cancelled before completion")`; `failed` rethrows the job's exception (or throws `std::runtime_error` if there is none).
+**`inline void finishGeometryJob()`**: Blocking: makes every field a geometry rebuild touches current. For the one place that needs the real pixels *now* (export). Returns at once when nothing is outstanding; otherwise it `waitForLatest()`s and acts on the `WaitStatus`: `completed` adopts the bundle (a missing value throws `std::logic_error`); `cancelled` adopts nothing, so no geometry field is updated half-way, and **throws** `std::runtime_error("Geometry rebuild was cancelled before completion")`; `failed` rethrows the job's exception (or throws `std::runtime_error` if there is none).
 
-**`static bool geometryBusy()`**: True while a crop / rotate / flip / straighten rebuild is still running (`workers().geometry.outstanding()`). Until it lands, `state.rotated` / `state.source` / the crop selection describe the *previous* geometry while `state.adjust` already holds the new one, so any edit that measures against them (a second rotate remapping the crop rect, Apply Crop reading the selection) would use stale sizes. Those edits are ignored while this is true, and their buttons are dimmed to match.
+**`inline bool geometryBusy()`**: True while a crop / rotate / flip / straighten rebuild is still running (`workers().geometry.outstanding()`). Until it lands, `state.rotated` / `state.source` / the crop selection describe the *previous* geometry while `state.adjust` already holds the new one, so any edit that measures against them (a second rotate remapping the crop rect, Apply Crop reading the selection) would use stale sizes. Those edits are ignored while this is true, and their buttons are dimmed to match.
 
 ### `crop_tool.hpp`
 The Crop tool's pointer logic and its two commands. Hit-testing which handle is under the pointer, dragging out / moving / resizing the selection (honoring the aspect lock and the image bounds), and Apply / Remove Crop, each one undo step. Coordinates passed to the handlers are canvas-local screen pixels; dividing by `state.zoom` gives image pixels.
@@ -897,15 +900,15 @@ The UI-thread glue of object segmentation, for the Masks pane's Object tool. The
 
 These three are filmstrip functions (`filmstrip.hpp`) needed by `adoptDecoded()` and the code before the filmstrip is defined. They sit at the end of this file because that is where the original code declared them; a leftover comment above them ("Swaps a finished decode into the editor") describes `adoptDecoded()` in `meta_commands.hpp`, not these declarations.
 
-- `static void filmMarkEdited(const std::string &path)`
-- `static int filmViewPos(int i)`
-- `static void filmApplyMeta(const std::string &path, const PhotoMeta &m)`
+- `inline void filmMarkEdited(const std::string &path)`
+- `inline int filmViewPos(int i)`
+- `inline void filmApplyMeta(const std::string &path, const PhotoMeta &m)`
 
 **Functions**
 
-**`static void adoptSegment(SegmentWorker::Result &&r)`**: **UI thread.** Takes a finished segmentation. **Prefetch results** just record `state.mask.encodedKey` (or show "Object selection unavailable: <error>"). Otherwise it clears the pending prompts, and on failure shows "Object selection failed". On success it stores the map and the prompts in the target mask part (an `ObjectShape`) with **one** undo step (`adjust.setMasks`), clears the status and asks for a recompute. A result whose mask or part is gone (deleted, undone away) or is no longer an object part is dropped silently.
+**`inline void adoptSegment(SegmentWorker::Result &&r)`**: **UI thread.** Takes a finished segmentation. **Prefetch results** just record `state.mask.encodedKey` (or show "Object selection unavailable: <error>"). Otherwise it clears the pending prompts, and on failure shows "Object selection failed". On success it stores the map and the prompts in the target mask part (an `ObjectShape`) with **one** undo step (`adjust.setMasks`), clears the status and asks for a recompute. A result whose mask or part is gone (deleted, undone away) or is no longer an object part is dropped silently.
 
-**`static void collectSegmentJob()`**: Non-blocking: adopts a finished segmentation if there is one. Polled once per frame from `flushPendingAdjust`.
+**`inline void collectSegmentJob()`**: Non-blocking: adopts a finished segmentation if there is one. Polled once per frame from `flushPendingAdjust`.
 
 ### `saved_edits.hpp`
 Saving a picture's edits to its sidecar file, plus the per-picture facts the Info pane and the status bar show (camera data, colour-space tag). A photo's edits live in `photo.jpg.literoom.json` beside it. They are written (to a temp file, then renamed, so a crash can't leave half a file) after any change once no mouse drag is in progress (`autosaveSidecar`, polled every frame from `flushPendingAdjust`), when another picture replaces this one, and when the app closes; and read back when the picture is opened (`loadSidecar()`, which lives in `lut_pane.hpp` because it also restores the LUT reference). A missing file is normal. A damaged one, one from a newer version, or one written for a different-sized picture is ignored (the editor starts clean) and the status bar says so, but it is first copied to `<sidecar>.bak` so the next autosave can't destroy it. A file that exists but can't be opened or read at all sets `state.sidecarBlocked`, and then nothing writes that picture's sidecar until it is opened again (both in `loadSidecar()`). Opening a picture and touching nothing writes nothing. The undo history is not saved, but what is saved is the newest history step (`latestToJson`), so stepping back to "Original" and closing the app keeps the edits above it. The file format is in [sidecar-format.md](sidecar-format.md).
@@ -914,21 +917,21 @@ Saving a picture's edits to its sidecar file, plus the per-picture facts the Inf
 
 **Functions**
 
-**`static std::filesystem::path sidecarPath(const std::string &imagePath)`**: **Input:** a picture path (a virtual copy's `photo.jpg|vcN` form is accepted). **Returns** the path of its sidecar file as a `std::filesystem::path`: a thin wrapper over the engine's `sidecarFilePath` (`io/sidecar_file.hpp`), the one definition of where a sidecar lives, so `saveSidecar` writes exactly the file `readSidecarFile` reads. `photo.jpg.literoom.json` beside the picture; a virtual copy has its own file (see `virtual_copy.hpp`).
+**`inline std::filesystem::path sidecarPath(const std::string &imagePath)`**: **Input:** a picture path (a virtual copy's `photo.jpg|vcN` form is accepted). **Returns** the path of its sidecar file as a `std::filesystem::path`: a thin wrapper over the engine's `sidecarFilePath` (`io/sidecar_file.hpp`), the one definition of where a sidecar lives, so `saveSidecar` writes exactly the file `readSidecarFile` reads. `photo.jpg.literoom.json` beside the picture; a virtual copy has its own file (see `virtual_copy.hpp`).
 
-**`static std::string pictureLabel(const std::string &path)`**: A picture's name for messages and the title bar: a virtual copy shows as "photo.jpg [Copy 2]".
+**`inline std::string pictureLabel(const std::string &path)`**: A picture's name for messages and the title bar: a virtual copy shows as "photo.jpg [Copy 2]".
 
-**`static const exif::PhotoInfo &currentPhotoInfo()`**: The open picture's camera data for the Info pane (make, model, lens, ISO, shutter, ...), read from the file once per opened picture: the first time the pane asks after imageSerial changed. It reads the first 256 KiB of the file on the UI thread, which is a fraction of a millisecond; nothing here touches the render pipeline. A picture with no readable camera data (a PNG, a JPEG without EXIF) gives an empty PhotoInfo.
+**`inline const exif::PhotoInfo &currentPhotoInfo()`**: The open picture's camera data for the Info pane (make, model, lens, ISO, shutter, ...), read from the file once per opened picture: the first time the pane asks after imageSerial changed. It reads the first 256 KiB of the file on the UI thread, which is a fraction of a millisecond; nothing here touches the render pipeline. A picture with no readable camera data (a PNG, a JPEG without EXIF) gives an empty PhotoInfo.
 
-**`static const color_tag::ColorTag &currentColorTag()`**: What the open file says its color space is, for the Info pane and the status bar: read once per opened picture, like currentPhotoInfo (a PNG's color chunks, or a JPEG's ICC profile). The editor converts nothing: it edits the file's numbers as they are and carries the tag into PNG exports.
+**`inline const color_tag::ColorTag &currentColorTag()`**: What the open file says its color space is, for the Info pane and the status bar: read once per opened picture, like currentPhotoInfo (a PNG's color chunks, or a JPEG's ICC profile). The editor converts nothing: it edits the file's numbers as they are and carries the tag into PNG exports.
 
-**`static void announceColorTag()`**: The status-bar notice for the file just opened: what it says its color space is, for every file (sRGB, untagged, or something else). A picture tagged as something other than sRGB also gets the reminder that nothing is converted. Short on purpose: setStatus cuts a message at 110 characters, and "Color: <profile> (embedded profile, not sRGB)" is already about 50 to 90 of them, so the part that matters comes first and the rest is brief.
+**`inline void announceColorTag()`**: The status-bar notice for the file just opened: what it says its color space is, for every file (sRGB, untagged, or something else). A picture tagged as something other than sRGB also gets the reminder that nothing is converted. Short on purpose: setStatus cuts a message at 110 characters, and "Color: <profile> (embedded profile, not sRGB)" is already about 50 to 90 of them, so the part that matters comes first and the rest is brief.
 
-**`static void saveSidecar()`**: Writes the sidecar for the open picture: `sidecarFileText(...)` of the file name, the original's size, `adjust.latestToJson()`, the rating / flag / label and the snapshots, to `<path>.tmp` and then renamed over the real file. `latestToJson()` saves the **newest** history step, not the current one, so stepping back to "Original" and closing the app keeps the edits above it. Does nothing without a picture. Marks edits, meta and snapshots as saved *before* writing, so a failing disk isn't retried every frame, only on the next edit. **With `state.sidecarBlocked` set it writes nothing** and shows "Not saved: its saved edits couldn't be read. Reopen the picture" as an error (the change still counts as seen, so it is not retried every frame), because the unreadable file's content is unknown and would be replaced by this picture's possibly empty edits. A write error shows "Couldn't save edits ..." in the status bar. When the edits (not just a rating) changed, calls `filmMarkEdited` so the filmstrip shows its "has edits" dot.
+**`inline void saveSidecar()`**: Writes the sidecar for the open picture: `sidecarFileText(...)` of the file name, the original's size, `adjust.latestToJson()`, the rating / flag / label and the snapshots, to `<path>.tmp` and then renamed over the real file. `latestToJson()` saves the **newest** history step, not the current one, so stepping back to "Original" and closing the app keeps the edits above it. Does nothing without a picture. Marks edits, meta and snapshots as saved *before* writing, so a failing disk isn't retried every frame, only on the next edit. **With `state.sidecarBlocked` set it writes nothing** and shows "Not saved: its saved edits couldn't be read. Reopen the picture" as an error (the change still counts as seen, so it is not retried every frame), because the unreadable file's content is unknown and would be replaced by this picture's possibly empty edits. A write error shows "Couldn't save edits ..." in the status bar. When the edits (not just a rating) changed, calls `filmMarkEdited` so the filmstrip shows its "has edits" dot.
 
-**`static void flushSidecar()`**: Saves now if anything changed since the last save or load (edits, rating / flag / label, or snapshots). Called before another picture replaces this one and when the app closes.
+**`inline void flushSidecar()`**: Saves now if anything changed since the last save or load (edits, rating / flag / label, or snapshots). Called before another picture replaces this one and when the app closes.
 
-**`static void autosaveSidecar()`**: Per frame: saves a finished change, but not while the mouse is still dragging a slider or a mask, because that would write on every frame.
+**`inline void autosaveSidecar()`**: Per frame: saves a finished change, but not while the mouse is still dragging a slider or a mask, because that would write on every frame.
 
 ## LUTs, Sync Settings and batch export
 
@@ -960,48 +963,48 @@ The UI side of the LUTs pane: the library's `.cube` files as a list, each with a
 
 **State and tables**
 
-- `gLuts`: `static std::vector<LutRow>`. The rows of the LUTs list, at most `kLutRows`.
-- `gLutsLoaded`: `static bool`, initially `false`. The folder was listed since the pane was last opened.
-- `gLutPaintCounter`: `static uint64_t`, initially `0`. Counter stamping each row's `paintVersion` whenever its preview or text changes.
-- `gLutSerial`: `static uint64_t`, initially `0`. The serial of the batch whose results are taken in; results of an earlier batch are ignored.
-- `gLutBuilt`: `static LutBuilt`. What the current previews were made for.
-- `gLutCacheEpoch`: `static uint64_t`, initially `1`. Bumped when the LUT cache is emptied; `currentLutStatus()` looks up again when it changes.
+- `gLuts`: `inline std::vector<LutRow>`. The rows of the LUTs list, at most `kLutRows`.
+- `gLutsLoaded`: `inline bool`, initially `false`. The folder was listed since the pane was last opened.
+- `gLutPaintCounter`: `inline uint64_t`, initially `0`. Counter stamping each row's `paintVersion` whenever its preview or text changes.
+- `gLutSerial`: `inline uint64_t`, initially `0`. The serial of the batch whose results are taken in; results of an earlier batch are ignored.
+- `gLutBuilt`: `inline LutBuilt`. What the current previews were made for.
+- `gLutCacheEpoch`: `inline uint64_t`, initially `1`. Bumped when the LUT cache is emptied; `currentLutStatus()` looks up again when it changes.
 
 **Functions**
 
-**`static void dropLutCache()`**: Empties the library's cache (`clearLutCache()`) and bumps `gLutCacheEpoch`, so `currentLutStatus()` looks again. For when a LUT file may have changed: an import, or another picture being opened.
+**`inline void dropLutCache()`**: Empties the library's cache (`clearLutCache()`) and bumps `gLutCacheEpoch`, so `currentLutStatus()` looks again. For when a LUT file may have changed: an import, or another picture being opened.
 
-**`static void refreshLuts()`**: Lists the library folder (`listLutEntries(lutDir())`) afresh into `gLuts`, at most `kLutRows` rows. A row for a file that is still there keeps what is known about it (preview, hash, size, warning and paint version). If the set of paths changed (a file came or went), the preview worker is cancelled and `gLutBuilt` is invalidated so the previews are made again; if only the contents of rows changed they are not. Sets `gLutsLoaded` and repaints.
+**`inline void refreshLuts()`**: Lists the library folder (`listLutEntries(lutDir())`) afresh into `gLuts`, at most `kLutRows` rows. A row for a file that is still there keeps what is known about it (preview, hash, size, warning and paint version). If the set of paths changed (a file came or went), the preview worker is cancelled and `gLutBuilt` is invalidated so the previews are made again; if only the contents of rows changed they are not. Sets `gLutsLoaded` and repaints.
 
-**`static LutStatus currentLutStatus()`**: **Returns** the `LutStatus` of the open picture's LUT in the library (none, missing, unreadable, or changed since it was chosen), from `adjust.lutStatus()`. Cached in function statics and looked up again only when `adjust.version()` or `gLutCacheEpoch` changed, because the pane's text asks every frame.
+**`inline LutStatus currentLutStatus()`**: **Returns** the `LutStatus` of the open picture's LUT in the library (none, missing, unreadable, or changed since it was chosen), from `adjust.lutStatus()`. Cached in function statics and looked up again only when `adjust.version()` or `gLutCacheEpoch` changed, because the pane's text asks every frame.
 
-**`static bool noteLutProblem()`**: Shows a status-bar message when the picture's LUT can't be used as chosen: *not in the LUT library* (the picture shows without it), *can't be read* (shows without it), or *has changed since it was chosen* (shown as a notice, not an error). **Returns** true if it said something.
+**`inline bool noteLutProblem()`**: Shows a status-bar message when the picture's LUT can't be used as chosen: *not in the LUT library* (the picture shows without it), *can't be read* (shows without it), or *has changed since it was chosen* (shown as a notice, not an error). **Returns** true if it said something.
 
-**`static std::string lutReason(const std::string &error)`**: Turns `"file.cube: line 3: ..."` into `"line 3: ..."` (the row already names the file); returns the text unchanged when it has no `": "`.
+**`inline std::string lutReason(const std::string &error)`**: Turns `"file.cube: line 3: ..."` into `"line 3: ..."` (the row already names the file); returns the text unchanged when it has no `": "`.
 
-**`static bool lutPreviewsCurrent()`**: True when the previews match the picture and its edits right now: `gLutBuilt` is valid, was made for the same `state.source` and for the same `adjust.version()`.
+**`inline bool lutPreviewsCurrent()`**: True when the previews match the picture and its edits right now: `gLutBuilt` is valid, was made for the same `state.source` and for the same `adjust.version()`.
 
-**`static void lutPreviewsFollow(bool wasCurrent)`**: Call after a change made by the LUTs pane itself, passing what `lutPreviewsCurrent()` was just before it. The previews do not depend on that change, so if they were current, `gLutBuilt.version` moves to the new version and they stay current. An unrelated edit made in between keeps them stale.
+**`inline void lutPreviewsFollow(bool wasCurrent)`**: Call after a change made by the LUTs pane itself, passing what `lutPreviewsCurrent()` was just before it. The previews do not depend on that change, so if they were current, `gLutBuilt.version` moves to the new version and they stay current. An unrelated edit made in between keeps them stale.
 
-**`static void setLutAmount(float v)`**: The LUT Amount slider's setter: sets `AdjId::LutAmount` and keeps the previews current, because they show every LUT at 100% whatever the amount is.
+**`inline void setLutAmount(float v)`**: The LUT Amount slider's setter: sets `AdjId::LutAmount` and keeps the previews current, because they show every LUT at 100% whatever the amount is.
 
-**`static void pollLutPreviews()`**: Once per frame (from `flushPendingAdjust`). First takes in the previews the worker has finished: results whose `serial` isn't `gLutSerial` (a replaced batch) are skipped; the rest are copied into the matching row (hash, size, thumbnail, error, warning) with a new paint version. Then, only with the LUTs pane open: lists the folder if it hasn't been (`gLutsLoaded`), and — with a picture open, no drag, and a non-empty list — starts a new batch when the previews are not current: if the picture itself changed, every row's old thumbnail is cleared first; the job is `{serial, base = previewBase or source, buildRenderParams(), every row's entry}`; `gLutBuilt` records the source and version it was made for.
+**`inline void pollLutPreviews()`**: Once per frame (from `flushPendingAdjust`). First takes in the previews the worker has finished: results whose `serial` isn't `gLutSerial` (a replaced batch) are skipped; the rest are copied into the matching row (hash, size, thumbnail, error, warning) with a new paint version. Then, only with the LUTs pane open: lists the folder if it hasn't been (`gLutsLoaded`), and — with a picture open, no drag, and a non-empty list — starts a new batch when the previews are not current: if the picture itself changed, every row's old thumbnail is cleared first; the job is `{serial, base = previewBase or source, buildRenderParams(), every row's entry}`; `gLutBuilt` records the source and version it was made for.
 
-**`static void applyLutRow(size_t i)`**: **Input:** a list row index. Gives the picture that row's LUT: one undo step, "LUT: <name>" in History. Ignored while dragging, with no picture, or for an out-of-range row. A row whose file can't be read shows "Can't use <name>: <reason>". The hash stored in the edit is the file's own, as the library reads it now (`acquireLut`). If `setLut` reports no change it says "Already using the LUT <name>"; otherwise the previews follow, the picture is recomputed and the status says "Applied LUT: <name>".
+**`inline void applyLutRow(size_t i)`**: **Input:** a list row index. Gives the picture that row's LUT: one undo step, "LUT: <name>" in History. Ignored while dragging, with no picture, or for an out-of-range row. A row whose file can't be read shows "Can't use <name>: <reason>". The hash stored in the edit is the file's own, as the library reads it now (`acquireLut`); if that read fails the status says "Couldn't read the LUT <name>". If `setLut` reports no change it says "Already using the LUT <name>"; otherwise the previews follow, the picture is recomputed and the status says "Applied LUT: <name>".
 
-**`static void removeLut()`**: Takes the LUT off the picture (and its amount back to 0): one undo step, "Remove LUT". Ignored while dragging or with no picture; does nothing if there was no LUT.
+**`inline void removeLut()`**: Takes the LUT off the picture (and its amount back to 0): one undo step, "Remove LUT". Ignored while dragging or with no picture; does nothing if there was no LUT. Status: "Removed the LUT".
 
-**`static void importLutPaths(const std::vector<std::string> &files)`**: **Input:** paths of `.cube` files. Copies each into the library with `importLutFile(file, lutDir(), ...)`, then drops the cache and re-lists. Status: "Couldn't import: <first error>" if none worked; a warning that the (first) imported LUT "may expect camera-log input and look wrong on this picture" (imported, not refused); otherwise "Imported LUT: <name>" or "Imported N LUTs", with "(M skipped: <first error>)" when some failed.
+**`inline void importLutPaths(const std::vector<std::string> &files)`**: **Input:** paths of `.cube` files. Copies each into the library with `importLutFile(file, lutDir(), ...)`, then drops the cache and re-lists. Status: "Couldn't import: <first error>" if none worked; a warning that the (first) imported LUT "may expect camera-log input and look wrong on this picture" (imported, not refused; shown as an error-coloured message that **replaces** the summary, so a skipped count is not reported in that case); otherwise "Imported LUT: <name>" or "Imported N LUTs", with "(M skipped: <first error>)" when some failed.
 
-**`static void importLuts()`**: Opens the file picker ("Import LUTs", filters `*.cube` and all files) and passes the result to `importLutPaths`.
+**`inline void importLuts()`**: Opens the file picker ("Import LUTs", filters `*.cube` and all files) and passes the result to `importLutPaths`.
 
-**`static std::string lutRowDetail(size_t i)`**: **Input:** a row index. **Returns** the line under the row's name: "Can't be read: <reason>", or the table size as "N³ points" plus "may expect camera-log input" when the file has that warning (joined with a bullet). Empty for an out-of-range row.
+**`inline std::string lutRowDetail(size_t i)`**: **Input:** a row index. **Returns** the line under the row's name: "Can't be read: <reason>", or the table size as "N³ points" plus "may expect camera-log input" when the file has that warning (joined with a bullet). Empty for an out-of-range row.
 
-**`static std::string lutCurrentText()`**: **Returns** what the pane says about the picture's own LUT: "No LUT on this picture", "LUT: <name>", or the same with the problem named (not in the library / can't be read, "so it has no effect"; or "the file has changed since it was chosen").
+**`inline std::string lutCurrentText()`**: **Returns** what the pane says about the picture's own LUT: "No LUT on this picture", "LUT: <name>", or the same with the problem named (not in the library / can't be read, "so it has no effect"; or "the file has changed since it was chosen").
 
-**`static bool backUpIgnoredSidecar(const std::filesystem::path &sidecar)`**: Copies a saved-edits file that is about to be ignored to `<sidecar>.bak`, so the edits the next autosave writes can't destroy what was in it. An existing `.bak` is left alone (the first copy is the one worth keeping). **Returns** true if the copy exists afterwards.
+**`inline bool backUpIgnoredSidecar(const std::filesystem::path &sidecar)`**: Copies a saved-edits file that is about to be ignored to `<sidecar>.bak`, so the edits the next autosave writes can't destroy what was in it. An existing `.bak` is left alone (the first copy is the one worth keeping). **Returns** true if the copy exists afterwards.
 
-**`static void loadSidecar()`**: Applies the picture's saved edits, if it has any. Call right after `adjust.reset()` + `setOriginalSize()` and **before** `syncSource()`, so the saved crop / rotation is what gets built. Starts from a pristine state (`sidecarSaved = adjust.version()`, no rating, no snapshots, `sidecarBlocked` false, LUT cache dropped). The file is read with `readSidecarFile`; `SidecarRead::Absent` (no file) is the normal case and returns silently. A file it can't use must not be lost to the next autosave, so there are two kinds:
+**`inline void loadSidecar()`**: Applies the picture's saved edits, if it has any. Call right after `adjust.reset()` + `setOriginalSize()` and **before** `syncSource()`, so the saved crop / rotation is what gets built. Starts from a pristine state (`sidecarSaved = adjust.version()`, no rating, no snapshots, `sidecarBlocked` false, LUT cache dropped). The file is read with `readSidecarFile`; `SidecarRead::Absent` (no file) is the normal case and returns silently. A file it can't use must not be lost to the next autosave, so there are two kinds:
 - **Unreadable** (`readSidecarFile` returns `SidecarRead::Unreadable` or `TooBig`: the file is there but can't be checked, opened or read, or its size is out of range): the picture opens with `state.sidecarBlocked` set and the status "Changes won't be saved: saved edits unreadable (<why>)" as an error, where <why> is the reason `readSidecarFile` reports. Content unknown and not copyable, so `saveSidecar` refuses to write until the picture is opened again.
 - **Unusable** (read, but `sidecarCheckText` or `adjust.loadJson` rejects it): JSON that doesn't parse (its parse error is the reason, "unreadable" if it gives none), a `version` newer than `kSidecarVersion` ("made by a newer Literoom"), an `image` size different from the picture's ("the picture's size has changed"), or edits that `adjust.loadJson` rejects ("unreadable"). The file is first copied by `backUpIgnoredSidecar`, the picture opens clean and the status says "Ignored saved edits: <why> (old file kept as .bak)". If even the copy fails, it counts as unreadable (blocked, "can't back up the old file").
 - An **empty** file (`SidecarRead::Empty`) holds nothing to lose: "Ignored saved edits: the file is empty", not blocked.
@@ -1014,11 +1017,11 @@ The UI-thread glue of **Sync Settings** and **batch rating**: copying the open p
 
 **Functions**
 
-**`static bool syncBusy()`**: True while a sync is running, and then also shows "Wait for the sync to finish" in the status bar. Commands that touch sidecars (opening a picture, another sync) call this first.
+**`inline bool syncBusy()`**: True while a sync is running, and then also shows "Wait for the sync to finish" in the status bar. Commands that touch sidecars (opening a picture, another sync) call this first.
 
-**`static void collectSyncJob()`**: Polled once per frame from `flushPendingAdjust`. When a result is ready: for each success marks the strip (`filmApplyMeta` for a rating-only job, which sets no "has edits" dot; `filmMarkEdited` for a look sync) and counts failures, remembering the first as "<picture>: <reason>". Status: "Updated N selected photo(s)" or "Synced settings to N photo(s)", or the same with ", skipped M (<first error>)" as an error.
+**`inline void collectSyncJob()`**: Polled once per frame from `flushPendingAdjust`. When a result is ready: for each success marks the strip (`filmApplyMeta` for a rating-only job, which sets no "has edits" dot; `filmMarkEdited` for a look sync) and counts failures, remembering the first as "<picture>: <reason>". Status: "Updated N selected photo(s)" or "Synced settings to N photo(s)", or the same with ", skipped M (<first error>)" as an error.
 
-**`static void syncSettings()`**: Image > Sync Settings to Selected. Ignored while dragging, with no picture open, or while a sync runs. Collects the selected pictures other than the open one that the filter isn't hiding. With none: "Select other photos in the filmstrip first (Ctrl+click, Shift+click)". Otherwise snapshots the open picture's look (`adjust.currentPreset`), submits the job and shows "Syncing settings to N photo(s)...".
+**`inline void syncSettings()`**: Image > Sync Settings to Selected. Ignored while dragging, with no picture open, or while a sync runs. Collects the selected pictures other than the open one that the filter isn't hiding. With none: "Select other photos in the filmstrip first (Ctrl+click, Shift+click)". Otherwise snapshots the open picture's look (`adjust.currentPreset`), submits the job and shows "Syncing settings to N photo(s)...".
 
 ### `export.hpp`
 **Batch export** from the filmstrip: File > Export Selected... and Export All Shown... write every picked picture to one folder with the Export pane's settings. Like Sync, the pictures are not open, so the work is a pure function of each picture's file and its sidecar (`exportPicture` in `workers/export_worker.hpp`: decode, load the edits into a local `AdjustmentSet`, orient → straighten → crop → render, resize, encode). The open picture is exported from its sidecar too, so its pending edits are flushed to disk first. Unlike Sync it can be stopped: Stop Export drops what is queued and abandons the picture being rendered. Export only *reads* sidecars, so it does not block opening pictures or editing; a picture is exported with the edits it has on disk when the batch reaches it. (The single-picture export, `exportImage`, is in `meta_commands.hpp`.) The worker is `workers().exporter` ([workers.hpp](#workershpp)).
@@ -1043,23 +1046,23 @@ The UI-thread glue of **Sync Settings** and **batch rating**: copying the open p
 
 **State and tables**
 
-- `exportRun`: `static ExportRun`. The running batch's progress.
+- `exportRun`: `inline ExportRun`. The running batch's progress.
 
 **Functions**
 
-**`static bool exportBusy()`**: True while a batch export is running, and then also shows "Wait for the export to finish (or use Stop Export)".
+**`inline bool exportBusy()`**: True while a batch export is running, and then also shows "Wait for the export to finish (or use Stop Export)".
 
-**`static std::vector<std::string> exportTargets(bool selectedOnly)`**: **Input:** `selectedOnly`. **Returns** the paths of the strip's pictures in strip order, as the filter shows them: only the selected ones, or all of them.
+**`inline std::vector<std::string> exportTargets(bool selectedOnly)`**: **Input:** `selectedOnly`. **Returns** the paths of the strip's pictures in strip order, as the filter shows them: only the selected ones, or all of them.
 
-**`static void startExportBatch(std::vector<std::string> paths)`**: **Input:** the pictures to export. Ignored while dragging or while an export runs. With none: "Select pictures in the filmstrip first (Ctrl+click, Shift+click), or use Export All Shown". Asks for a folder ("Export to Folder"; cancel = stop), flushes the open picture's sidecar, builds an `ExportSettings` from the Export pane's fields (`exportJpeg`, `exportPng16` only when not JPEG, `jpegQuality`, `keepMetadata`, `removeGps` only with `keepMetadata`, `exportResize`, `exportLongEdge`, `exportOverwrite`), starts the worker and resets `exportRun`. Status: "Exporting N photo(s)...".
+**`inline void startExportBatch(std::vector<std::string> paths)`**: **Input:** the pictures to export. Ignored while dragging or while an export runs. With none: "Select pictures in the filmstrip first (Ctrl+click, Shift+click), or use Export All Shown". Asks for a folder ("Export to Folder"; cancel = stop), flushes the open picture's sidecar, builds an `ExportSettings` from the Export pane's fields (`exportJpeg`, `exportPng16` only when not JPEG, `jpegQuality`, `keepMetadata`, `removeGps` only with `keepMetadata`, `exportResize`, `exportLongEdge`, `exportOverwrite`), starts the worker (if it refuses, the function returns without a message and `exportRun` is untouched) and resets `exportRun`. Status: "Exporting N photo(s)...".
 
-**`static void exportSelected()`**: File > Export Selected...: `startExportBatch(exportTargets(true))`.
+**`inline void exportSelected()`**: File > Export Selected...: `startExportBatch(exportTargets(true))`.
 
-**`static void exportAllShown()`**: File > Export All Shown...: `startExportBatch(exportTargets(false))`.
+**`inline void exportAllShown()`**: File > Export All Shown...: `startExportBatch(exportTargets(false))`.
 
-**`static void stopExport()`**: Stop Export: cancels the worker (it drops what is queued and abandons the picture being rendered) and shows "Stopping the export...". No-op when nothing is running.
+**`inline void stopExport()`**: Stop Export: cancels the worker (it drops what is queued and abandons the picture being rendered) and shows "Stopping the export...". No-op when nothing is running.
 
-**`static void collectExportJob()`**: Polled once per frame from `flushPendingAdjust`. Does nothing without an active run. Takes the outcomes so far (asking `busy()` *before* collecting, so a finished worker's last outcomes aren't lost) and counts ok / cancelled / failed, keeping the first error. While running it shows "Exporting X of N...". When finished it ends the run with "Exported N photo(s) to <folder>", "Exported N, skipped M (<first error>)", or, if stopped, "Export stopped: N exported, M skipped, K not exported".
+**`inline void collectExportJob()`**: Polled once per frame from `flushPendingAdjust`. Does nothing without an active run. Takes the outcomes so far (asking `busy()` *before* collecting, so a finished worker's last outcomes aren't lost) and counts ok / cancelled / failed, keeping the first error. While running it shows "Exporting X of N...". When finished it ends the run with "Exported N photo(s) to <folder>", "Exported N, skipped M (<first error>)", or, if stopped, "Export stopped: N exported, M skipped, K not exported".
 
 ## Filmstrip and per-picture commands
 
@@ -1090,7 +1093,7 @@ Five stars ("at least N", click the lit one again to switch it off), Pick and Re
 | `kBarPickW` | `float` | `38.0f` | Width of the Pick button |
 | `kBarRejectW` | `float` | `52.0f` | Width of the Reject button |
 | `kBarClearW` | `float` | `44.0f` | Width of the Clear button |
-| `kLabelDisplay[kLabelCount]` | `char *const` | `{"Red", "Yellow", "Green", "Blue", "Purple"}` |  |
+| `kLabelDisplay[kLabelCount]` | `const char *const` | `{"Red", "Yellow", "Green", "Blue", "Purple"}` |  |
 
 **Types**
 
@@ -1104,77 +1107,77 @@ Five stars ("at least N", click the lit one again to switch it off), Pick and Re
   | `x` | `float` | `0.0f` |  |
   | `w` | `float` | `0.0f` |  |
 
-  - `enum class Kind: `None`, `Star`, `Pick`, `Reject`, `Label`, `Clear``
+  - `enum Kind` (unscoped, nested in `FilmBarItem`): `None`, `Star`, `Pick`, `Reject`, `Label`, `Clear`
 
 **State and tables**
 
-- `kLabelColors`: `constexpr std::array<Color, kLabelCount>`, initially `{ Color{225, 70, 70}, Color{232, 196, 60}, Color{80, 185, 100}, Color…`. The five colour labels' colours (Red, Yellow, Green, Blue, Purple).
+- `kLabelColors`: `inline constexpr std::array<Color, kLabelCount>`, initially `{ Color{225, 70, 70}, Color{232, 196, 60}, Color{80, 185, 100}, Color…`. The five colour labels' colours (Red, Yellow, Green, Blue, Purple).
 
 **Forward declarations** (defined in a later file; declared here because this code is written before it)
 
-- `static void adoptDecoded(DecodeWorker::Result &&r)`: defined in `meta_commands.hpp` (`DecodeWorker` is in the engine's [`decode_job.hpp`](headers.md#decode_jobhpp))
+- `inline void adoptDecoded(DecodeWorker::Result &&r)`: defined in `meta_commands.hpp` (`DecodeWorker` is in the engine's [`decode_job.hpp`](headers.md#decode_jobhpp))
 
 **Functions**
 
-**`static void filmPushEntry(FilmStrip &f, const std::string &path, const std::string &name, int copy)`**: Appends one `FilmEntry` (path, display name, copy number) to the strip and records it in the name index `byName`. The index is keyed by the lower-cased last part of the path, so a virtual copy (`photo.jpg|vc2`) never collides with its picture.
+**`inline void filmPushEntry(FilmStrip &f, const std::string &path, const std::string &name, int copy)`**: Appends one `FilmEntry` (path, display name, copy number) to the strip and records it in the name index `byName`. The index is keyed by the lower-cased last part of the path, so a virtual copy (`photo.jpg|vc2`) never collides with its picture.
 
-**`static void filmPushWithCopies(FilmStrip &f, const std::string &path, const std::string &name, const VcMap &copies)`**: Appends a picture and then its virtual copies, taken from `copies` (the folder's copies by lower-case name, from `listVirtualCopies`).
+**`inline void filmPushWithCopies(FilmStrip &f, const std::string &path, const std::string &name, const VcMap &copies)`**: Appends a picture and then its virtual copies, taken from `copies` (the folder's copies by lower-case name, from `listVirtualCopies`).
 
-**`static FilmStrip filmListFolder(const std::string &folder)`**: **Input:** a folder path. **Returns** a new `FilmStrip` (not yet shown) for it: the folder's JPEG / PNG files in listing order (`listImageFiles`, at most `kFilmMaxFiles`), each followed by its virtual copies.
+**`inline FilmStrip filmListFolder(const std::string &folder)`**: **Input:** a folder path. **Returns** a new `FilmStrip` (not yet shown) for it: the folder's JPEG / PNG files in listing order (`listImageFiles`, at most `kFilmMaxFiles`), each followed by its virtual copies.
 
-**`static void filmRebuildView()`**: Recomputes `view`, the indices of the files the strip shows: all of them with no filter, else the ones the filter matches. The open picture (`current`) and the one being opened (`target`) always stay in, so rating the picture you are looking at under a filter can't make it vanish. Marks the strip dirty.
+**`inline void filmRebuildView()`**: Recomputes `view`, the indices of the files the strip shows: all of them with no filter, else the ones the filter matches. The open picture (`current`) and the one being opened (`target`) always stay in, so rating the picture you are looking at under a filter can't make it vanish. Marks the strip dirty.
 
-**`static int filmViewPos(int i)`**: **Input:** a file index. **Returns** its position in `view` (binary search), or -1 if it isn't shown.
+**`inline int filmViewPos(int i)`**: **Input:** a file index. **Returns** its position in `view` (binary search), or -1 if it isn't shown.
 
-**`static void filmClampScroll()`**: Keeps `scrollX` within `[0, view.size() × kFilmCellW − viewW]` (0 when everything fits).
+**`inline void filmClampScroll()`**: Keeps `scrollX` within `[0, view.size() × kFilmCellW − viewW]` (0 when everything fits).
 
-**`static void filmEnsureVisible(int i)`**: Scrolls the strip the least amount that brings file `i`'s cell fully into view (using 800 before the first paint has set `viewW`). Does nothing if `i` isn't shown.
+**`inline void filmEnsureVisible(int i)`**: Scrolls the strip the least amount that brings file `i`'s cell fully into view (using 800 before the first paint has set `viewW`). Does nothing if `i` isn't shown.
 
-**`static void filmQueueThumbs()`**: Gives the thumbnail worker its queue: the pictures that still lack a thumbnail and haven't failed, ordered by distance from the target (or the open picture), alternating right then left, nearest first.
+**`inline void filmQueueThumbs()`**: Gives the thumbnail worker its queue: the pictures that still lack a thumbnail and haven't failed, ordered by distance from the target (or the open picture), alternating right then left, nearest first.
 
-**`static void filmAdoptFiles(const std::vector<std::string> &paths)`**: **Input:** an already sorted list of paths from one folder. Replaces the strip with one holding exactly those pictures (and each one's virtual copies); the folder is taken from the first path. Keeps the strip's visibility, starts with no filter.
+**`inline void filmAdoptFiles(const std::vector<std::string> &paths)`**: **Input:** an already sorted list of paths from one folder. Replaces the strip with one holding exactly those pictures (and each one's virtual copies); the folder is taken from the first path (`"."` if it has no parent). A virtual copy's path stands for its picture (`vcImageOf`) and a picture listed twice is added once. Keeps the strip's visibility, starts with no filter.
 
-**`static bool filmAdoptFolder(const std::string &folder)`**: **Input:** a folder. Makes it the strip's (`filmListFolder`). **Returns** false, changing nothing, if it holds no JPEG / PNG pictures. Keeps visibility; a new strip has no filter.
+**`inline bool filmAdoptFolder(const std::string &folder)`**: **Input:** a folder. Makes it the strip's (`filmListFolder`). **Returns** false, changing nothing, if it holds no JPEG / PNG pictures. Keeps visibility; a new strip has no filter.
 
-**`static void filmSync(const std::string &imagePath)`**: **Input:** the path of the picture that is now open. Follows it: if it isn't in the current strip (or the strip is for another folder) the strip is rebuilt around it (`filmAdoptFiles({path})`); sets `current` and `target`; copies the editor's own rating / flag / label (loaded with its sidecar) into its entry; rebuilds the view, records `thumbVersion = adjust.version()`, scrolls to it and re-aims the thumbnail worker. Call after `loadSidecar()`.
+**`inline void filmSync(const std::string &imagePath)`**: **Input:** the path of the picture that is now open. Follows it: if it isn't in the current strip (or the strip is for another folder) the strip is rebuilt around it (`filmAdoptFiles({path})`); sets `current` and `target`; copies the editor's own rating / flag / label (loaded with its sidecar) into its entry; rebuilds the view, records `thumbVersion = adjust.version()`, scrolls to it and re-aims the thumbnail worker. Call after `loadSidecar()`.
 
-**`static void filmLeave()`**: The open picture is about to be replaced: if it has been edited since its thumbnail was made (`adjust.version() != thumbVersion`), make its thumbnail from `state.image` so the strip shows the edits, and mark it edited.
+**`inline void filmLeave()`**: The open picture is about to be replaced: if it has been edited since its thumbnail was made (`adjust.version() != thumbVersion`), make its thumbnail from `state.image` so the strip shows the edits, and mark it edited.
 
-**`static void filmMarkEdited(const std::string &path)`**: Called when a sidecar was written for `path`: sets that entry's "has edits" dot (once) and marks the strip dirty. Ignores a path not in the strip.
+**`inline void filmMarkEdited(const std::string &path)`**: Called when a sidecar was written for `path`: sets that entry's "has edits" dot (once) and marks the strip dirty. Ignores a path not in the strip.
 
-**`static void filmApplyMeta(const std::string &path, const PhotoMeta &m)`**: A batch rating finished for `path`: stores the new rating / flag / label in its entry (not for the open picture, whose value is the editor's own), re-filters if a filter is on (the picture may now appear or disappear) and marks the strip dirty.
+**`inline void filmApplyMeta(const std::string &path, const PhotoMeta &m)`**: A batch rating finished for `path`: stores the new rating / flag / label in its entry (not for the open picture, whose value is the editor's own), re-filters if a filter is on (the picture may now appear or disappear) and marks the strip dirty.
 
-**`static void collectThumbJobs()`**: UI thread: takes in the thumbnails the worker has made. Results from a folder we have left are ignored. A new thumbnail replaces the entry's, except the open picture's own once it has edits (its thumbnail already shows them); an original's thumbnail is shared with the virtual copies right after it that have none. A failed thumbnail marks the entry `failed` (a virtual copy is skipped on purpose, not a failure). The first reading of each entry's rating / edited flag is taken from the worker; after that the editor's own value is the truth. Re-filters if a filter is waiting for metadata that just arrived.
+**`inline void collectThumbJobs()`**: UI thread: takes in the thumbnails the worker has made. Results from a folder we have left are ignored. A new thumbnail replaces the entry's, except the open picture's own once it has edits (its thumbnail already shows them); an original's thumbnail is shared with the virtual copies right after it that have none. A failed thumbnail marks the entry `failed` (a virtual copy is skipped on purpose, not a failure). The first reading of each entry's rating / edited flag is taken from the worker; after that the editor's own value is the truth. Re-filters if a filter is waiting for metadata that just arrived.
 
-**`static void filmOpenIndex(int i)`**: **Input:** an index into `files`. Opens that picture. Ignored if out of range, already the target, while dragging or while a sync runs. Sets `target`, scrolls to it and keeps it in the view. If it is another set of edits (a virtual copy) of the picture already open (same `vcImageOf`), it invalidates `workers().decode` (a decode of some other file is no longer wanted), skips the decode and adopts a copy of the open pixels exactly as a finished decode would (`adoptDecoded`, which flushes the old edits and loads these). Otherwise shows "Opening <name>..." and submits the path to `workers().decode`.
+**`inline void filmOpenIndex(int i)`**: **Input:** an index into `files`. Opens that picture. Ignored if out of range, already the target, while dragging or while a sync runs. Sets `target`, scrolls to it and keeps it in the view. If it is another set of edits (a virtual copy) of the picture already open (same `vcImageOf`), it invalidates `workers().decode` (a decode of some other file is no longer wanted), skips the decode and adopts a copy of the open pixels exactly as a finished decode would (`adoptDecoded`, which flushes the old edits and loads these). Otherwise shows "Opening <name>..." and submits the path to `workers().decode`.
 
-**`static void filmStep(int d)`**: **Input:** +1 or −1 (Left / Right keys). Opens the previous / next picture among those the strip shows, relative to the one asked for last (so quick repeats keep moving). If the base picture is hidden by the filter it starts from the edge. Clamped at both ends.
+**`inline void filmStep(int d)`**: **Input:** +1 or −1 (Left / Right keys). Opens the previous / next picture among those the strip shows, relative to the one asked for last (so quick repeats keep moving). If the base picture is hidden by the filter it starts from the edge. Clamped at both ends.
 
-**`static void filmScrollBy(float dx)`**: Scrolls the strip by `dx` logical pixels, clamped.
+**`inline void filmScrollBy(float dx)`**: Scrolls the strip by `dx` logical pixels, clamped.
 
-**`static void filmClearSelection()`**: Deselects every picture.
+**`inline void filmClearSelection()`**: Deselects every picture.
 
-**`static void filmSelectAll()`**: Selects exactly the pictures the strip shows (Ctrl+A); hidden ones are deselected.
+**`inline void filmSelectAll()`**: Selects exactly the pictures the strip shows (Ctrl+A); hidden ones are deselected.
 
-**`static std::vector<FilmBarItem> filmBarItems()`**: **Returns** the filter bar's buttons, left to right with their x and width: five stars (`kMaxRating`), a gap, Pick, Reject, a gap, the five colour labels, and Clear (after a gap) only while a filter is on. Painting and clicking both read this list, so they can't disagree.
+**`inline std::vector<FilmBarItem> filmBarItems()`**: **Returns** the filter bar's buttons, left to right with their x and width: five stars (`kMaxRating`), a gap, Pick, Reject, a gap, the five colour labels, and Clear (after a gap) only while a filter is on. Painting and clicking both read this list, so they can't disagree.
 
-**`static void filmFilterChanged()`**: The filter changed: rebuilds the view and deselects anything now hidden (Sync Settings would write into it unseen), clamps the scroll and keeps the open picture visible.
+**`inline void filmFilterChanged()`**: The filter changed: rebuilds the view and deselects anything now hidden (Sync Settings would write into it unseen), clamps the scroll and keeps the open picture visible.
 
-**`static void filmBarClick(float x)`**: **Input:** x in the filter bar. Finds the button under it and toggles the matching filter: the minimum rating ("at least N"; clicking the lit one again clears it), the Pick or Reject flag, a colour label, or Clear (resets the filter). Then `filmFilterChanged()`.
+**`inline void filmBarClick(float x)`**: **Input:** x in the filter bar. Finds the button under it and toggles the matching filter: the minimum rating ("at least N"; clicking the lit one again clears it), the Pick or Reject flag, a colour label, or Clear (resets the filter). Then `filmFilterChanged()`.
 
-**`static void filmClick(float localX, float localY, const KeyModifiers &mods)`**: **Inputs:** a click in strip-local coordinates and the key modifiers. Above the cells it is a filter-bar click. On a picture: a plain click opens it (`filmOpenIndex`) and clears the selection. **Ctrl+click** toggles that picture in the selection; **Shift+click** selects the range from the anchor to it, among the pictures shown. The open picture joins the selection the first time, so it is part of a range.
+**`inline void filmClick(float localX, float localY, const KeyModifiers &mods)`**: **Inputs:** a click in strip-local coordinates and the key modifiers. Above the cells it is a filter-bar click. On a picture: a plain click opens it (`filmOpenIndex`) and clears the selection. **Ctrl+click** toggles that picture in the selection; **Shift+click** selects the range from the anchor to it, among the pictures shown. The open picture joins the selection the first time, so it is part of a range.
 
-**`static void toggleFilmstrip()`**: Shows or hides the strip (View menu / shortcut).
+**`inline void toggleFilmstrip()`**: Shows or hides the strip (View menu / shortcut).
 
-**`static bool filmstripShown()`**: True when the strip is switched on and holds at least one picture.
+**`inline bool filmstripShown()`**: True when the strip is switched on and holds at least one picture.
 
-**`static void openFolder()`**: File > Open Folder: lets the user pick a folder, lists it, and opens its first picture. Does nothing if the folder has no JPEG / PNG pictures (the status bar says so).
+**`inline void openFolder()`**: File > Open Folder: lets the user pick a folder, lists it, and opens its first picture. Does nothing if the folder has no JPEG / PNG pictures (the status bar says so).
 
-**`static std::string starsText(int n)`**: **Input:** n. **Returns** n filled stars (★) as a UTF-8 string.
+**`inline std::string starsText(int n)`**: **Input:** n. **Returns** n filled stars (★) as a UTF-8 string.
 
-**`static const std::shared_ptr<CanvasTexture> &filmThumbTexture(const FilmEntry &e)`**: **Returns** the GPU texture `paintFilmstrip` draws for an entry: built from `e.thumb` the first time and again whenever `e.thumb` is replaced. Every thumbnail keeps its own copy because `drawImage` has one cache slot per canvas, so drawing a row of thumbnails with it re-uploaded every visible one on every repaint. The source image is held beside the texture so its address can't be reused while compared. Null if there is no thumbnail or the texture couldn't be made.
+**`inline const std::shared_ptr<CanvasTexture> &filmThumbTexture(const FilmEntry &e)`**: **Returns** the GPU texture `paintFilmstrip` draws for an entry: built from `e.thumb` the first time and again whenever `e.thumb` is replaced. Every thumbnail keeps its own copy because `drawImage` has one cache slot per canvas, so drawing a row of thumbnails with it re-uploaded every visible one on every repaint. The source image is held beside the texture so its address can't be reused while compared. Null if there is no thumbnail or the texture couldn't be made.
 
-**`static void paintFilmstrip(CanvasContext &ctx)`**: The canvas painter for the whole strip. Records the canvas width as `viewW`, clamps the scroll, fills the background and returns if the strip is empty. Draws the **filter bar** (a lit background for an active Pick / Reject / label, stars filled up to the minimum rating, the Clear button) and then the **cells** that are in view: each thumbnail through `filmThumbTexture`, a highlight on the open picture and the selected pictures, and the rating stars, flag and colour label of the entry plus its "has edits" dot.
+**`inline void paintFilmstrip(CanvasContext &ctx)`**: The canvas painter for the whole strip. Records the canvas width as `viewW`, clamps the scroll, fills the background and returns if the strip is empty. Draws the **filter bar** (a lit background for an active Pick / Reject / label, stars filled up to the minimum rating, the Clear button) and then the **cells** that are in view: each thumbnail through `filmThumbTexture`, a filled highlight with an accent border on the target picture (the one asked for last, which is the open one when idle) and a quieter outlined highlight on pictures picked for Sync Settings, a dimming layer over a rejected picture, and the rating stars, flag badge ("P" / "X") and colour label of the entry plus its "has edits" dot and, on a virtual copy, a "C<n>" badge. While a filter is on, the right end of the bar shows "N of M" (with "(reading ratings…)" while some pictures' ratings have not been read yet), and a filter that matches nothing shows "No photos match the filter" in place of the cells.
 
 ### `meta_commands.hpp`
 Four groups of commands that don't belong to one pane. **Rating, flag and colour label** (`setPhotoMeta`, `applyMetaPatch`, `ratePhoto`, `flagPhoto`, `labelPhoto`): not edits, so they make no undo step and no History label and never touch `adjust.version()`. The open picture's value lives in `state.meta`, is mirrored into the strip's entry and is saved in the sidecar's `meta` object (`autosaveSidecar` / `flushSidecar` look at `state.metaDirty`). A command changes the open picture at once; if other pictures are selected in the filmstrip it changes them too, on the Sync Settings worker (their sidecars are patched in the background and the strip updates when the batch finishes). The open picture is never in that batch, so it can't race with autosave. "Choose the value it already has to clear it" is decided from the open picture, and the result (set or clear) is applied to every selected picture alike. **Opening** (`adoptDecoded`, `collectDecodeJob`, `openImage`): `adoptDecoded` is the one place where a freshly decoded picture replaces the open one. **Single-picture export** (`exportImage`). **`toggleSidebar`**.
@@ -1195,18 +1198,18 @@ Four groups of commands that don't belong to one pane. **Rating, flag and colour
 
 **`static void labelPhoto(int c)`**: **Input:** 1..`kLabelCount` toggles that colour (choosing the current one clears it); 0 clears. Messages: "Label: <colour>" or "Label cleared".
 
-**`static void adoptDecoded(DecodeWorker::Result &&r)`**
+**`inline void adoptDecoded(DecodeWorker::Result &&r)`**
 **Input:** a finished decode (`DecodeWorker::Result`). The one place a newly decoded picture replaces the open one (also reused by a virtual copy of the open picture, with the open pixels copied).
 - **Failure** (no image): shows "Couldn't open <picture>: <error>" and leaves whatever is open untouched (the strip's target returns to the current picture).
-- **Success**, in this order: disarm the white-balance picker; `uiState.resetForNewPicture()`; clear the status; `flushSidecar()` (the picture being replaced keeps its latest edits); `filmLeave()` (its thumbnail shows them); invalidate the render, geometry and segmentation workers (anything in flight belongs to the previous picture) and the pending object prompts; bump `imageSerial`; install `original` / `original16` / `imagePath`; 100% zoom, scroll 0; `adjust.reset()` and `setOriginalSize`; no selected mask; `loadSidecar()` (before `syncSource`, so the saved crop and rotation are what gets built); `filmSync()`; cancel any drag; drop the old `image` (forces the synchronous path); `syncSource(true)`; `updateImageFromAdjustments()`; set `colorNoticePending` (a large picture's geometry job would otherwise wipe the notice when it lands) and `announceColorTag()`.
+- **Success**, in this order: disarm the white-balance picker; `uiState.resetForNewPicture()`; clear the status; `flushSidecar()` (the picture being replaced keeps its latest edits); `filmLeave()` (its thumbnail shows them); invalidate the render, geometry and segmentation workers (anything in flight belongs to the previous picture) and the pending object prompts; bump `imageSerial`; install `original` / `original16` / `imagePath`; 100% zoom, scroll 0; `adjust.reset()` and `setOriginalSize`; no selected mask (`maskSel = -1`, `mask.part = 0`); `loadSidecar()` (before `syncSource`, so the saved crop and rotation are what gets built); `filmSync()`; cancel any drag; drop the old `image` (forces the synchronous path); `syncSource(true)`; `updateImageFromAdjustments()`; set `colorNoticePending` (a large picture's geometry job would otherwise wipe the notice when it lands) and `announceColorTag()`.
 
-**`static void collectDecodeJob()`**: Non-blocking: adopts a finished decode if there is one. Polled once per frame from `flushPendingAdjust`.
+**`inline void collectDecodeJob()`**: Non-blocking: adopts a finished decode if there is one. Polled once per frame from `flushPendingAdjust`.
 
 **`static void openImage()`**: File > Open: shows the multi-select picker ("Open Images", JPEG / PNG, with "All Files" as an alternative). Does nothing while a sync runs or on cancel. With several files it drops anything that isn't `.jpg` / `.jpeg` / `.png` ("No JPEG or PNG pictures selected" if nothing is left) and sorts them in natural name order. The strip becomes exactly what was picked (`filmAdoptFiles`), thumbnails are queued and the first picture is opened through the normal background decode (`filmOpenIndex(0)`).
 
-**`static void exportImage()`**: File > Export...: writes the picture as you see it (every edit, crop and rotation applied) to one file. Does nothing without a picture. First waits for any geometry job and render in flight (`finishGeometryJob`, `finishFullRender`) so a stale frame is never exported. Suggests `<name>-edit.jpg` / `.png` (a virtual copy adds `-copyN`); the Export pane's format only decides what the save dialog offers first, the **file name decides the format** (a name with no usable extension gets the pane's format). The output size follows Resize / Long edge (`fitLongEdge`, never enlarged); a picture JPEG can't hold (`kJpegMaxSide`) gets a message telling the user to turn on Resize or export as PNG. **16-bit PNG** re-renders the current source from its 16-bit twin (`renderToImage16`) with the same edits, rounded to 16 bits once at the end, then scales it the same way. A JPEG is written by `saveJpegFile` (quality, keep metadata, remove GPS, EXIF copied from the source file); an 8-bit PNG by `encodePng`. A PNG carries its source's colour tags (`color_tag::carryColorToPng`), and the status says so ("[sRGB kept]"); a non-sRGB PNG source exported to JPEG says the profile was not carried. Status: "Exported <file> [16-bit] [...] (W × H)" or "Export failed: <reason>".
+**`static void exportImage()`**: File > Export...: writes the picture as you see it (every edit, crop and rotation applied) to one file. Does nothing without a picture. First waits for any geometry job and render in flight (`finishGeometryJob`, `finishFullRender`) so a stale frame is never exported. Both can throw (`finishFullRender` and `finishGeometryJob` throw `std::runtime_error` when the job was cancelled, and rethrow a failed job's exception) and `exportImage` does not catch, so the exception leaves the command and nothing is exported. Suggests `<name>-edit.jpg` / `.png` (a virtual copy adds `-copyN`); the Export pane's format only decides what the save dialog offers first, the **file name decides the format** (a name with no usable extension gets the pane's format). The output size follows Resize / Long edge (`fitLongEdge`, never enlarged); a picture JPEG can't hold (`kJpegMaxSide`) gets a message telling the user to turn on Resize or export as PNG. **16-bit PNG** re-renders the current source from its 16-bit twin (`renderToImage16`) with the same edits, rounded to 16 bits once at the end, then scales it the same way. A JPEG is written by `saveJpegFile` (quality, keep metadata, remove GPS, EXIF copied from the source file; defined in `workers/export_worker.hpp`, shared with batch export); an 8-bit PNG by `encodePng`. A PNG carries its source's colour tags (the encoder's own are dropped with `color_tag::dropEncoderColor` first, then `color_tag::carryColorToPng` copies the source's), and the status says so ("[sRGB kept]"); a non-sRGB PNG source exported to JPEG says the profile was not carried. Status: "Exported <file> [16-bit] [...] (W × H)" or "Export failed: <reason>".
 
-**`static void toggleSidebar()`**: Opens the sidebar (activity 0) if it is closed, closes it if it is open (`activeActivity` -1 means closed).
+**`static void toggleSidebar()`**: Opens the sidebar on the Info pane (`kInfoActivity`) if it is closed (`kNoActivity`), closes it if it is open, and repaints (the crop overlay shows only while the Crop pane is open).
 
 ## Widgets and colour controls
 
@@ -1494,13 +1497,13 @@ The **Snapshots pane's** logic. A snapshot is a named, complete copy of the pict
 **`static void deleteSelectedSnapshot()`**: Deletes the selected snapshot (`uiState.snapshots.sel`), clears the selection, marks `snapshotsDirty` and says "Deleted snapshot: <name>". Not an undo step. No-op with no valid selection.
 
 ### `virtual_copies.hpp`
-**Virtual copies**, then the **Object mask** commands and adding / deleting masks (the file keeps the order the code had in `main.cpp`, so it holds two topics). A virtual copy is another set of edits for the same picture file: its own sidecar (`photo.jpg.vc2.literoom.json`), its own filmstrip cell right after the picture's, its own rating, flag, label and snapshots (see the engine's `virtual_copy.hpp`). Opening one of the open picture's copies reuses the pixels (see `filmOpenIndex`), so switching is instant. The object-mask part is the UI side of the segmenter in `segmentation.hpp`: clicks become prompts, a request goes to `segmentWorker`, and `adoptSegment` stores the result.
+**Virtual copies**, then the **Object mask** commands and adding / deleting masks (the file keeps the order the code had in `main.cpp`, so it holds two topics). A virtual copy is another set of edits for the same picture file: its own sidecar (`photo.jpg.vc2.literoom.json`), its own filmstrip cell right after the picture's, its own rating, flag, label and snapshots (see the engine's `virtual_copy.hpp`). Opening one of the open picture's copies reuses the pixels (see `filmOpenIndex`), so switching is instant. The object-mask part is the UI side of the segmenter in `segmentation.hpp`: clicks become prompts, a request goes to `workers().segment`, and `adoptSegment` stores the result.
 
 **Depends on:** `render_update.hpp`, `segmentation.hpp`, `saved_edits.hpp`, `sync.hpp`, `filmstrip.hpp`, `masks.hpp`; engine: `adjustment_set.hpp`, `file_utils.hpp`, `geometry.hpp`, `mask.hpp`, `mask_brush.hpp`, `mask_geom.hpp`, `mask_object.hpp`, `mask_polygon.hpp`, `mask_range.hpp`, `mask_rect.hpp`, `photo_meta.hpp`, `sidecar.hpp`, `thumb_worker.hpp`, `virtual_copy.hpp`. **Test:** no case of its own in `tests/cases/` (those cover the engine headers); it is compiled into `golden_render_test` and `lut_pane_test`, which include `main.cpp`.
 
-**Forward declarations** (defined in a later file; declared here because this code is written before it)
+**Forward declarations**
 
-- `static void objectPrefetch()`
+- `static void objectPrefetch()`: redeclared just before `addMask`, after its own definition earlier in this file, so it declares nothing new.
 
 **Functions**
 
@@ -2138,7 +2141,7 @@ The **Export** pane (activity 8): format buttons (**PNG (lossless)**, **PNG 16-b
 
 **Functions**
 
-**`static View buildExportPane()`**: **Returns** the Export pane (shown while `activeActivity == 8`). The format buttons set `state.exportJpeg` / `exportPng16`; the options set `jpegQuality`, `keepMetadata`, `removeGps`, `exportResize`, `exportLongEdge`, `exportOverwrite`, which `exportImage` and `startExportBatch` read.
+**`static View buildExportPane()`**: **Returns** the Export pane (shown while `activeActivity == kExportActivity`). The format buttons set `state.exportJpeg` / `exportPng16`; the options set `jpegQuality`, `keepMetadata`, `removeGps`, `exportResize`, `exportLongEdge`, `exportOverwrite`, which `exportImage` and `startExportBatch` read. The PNG 16-bit button also shows a one-line hint (smooth gradients survive heavy edits; larger files, not every program opens them). **Export...** is enabled only with a picture open. In the Batch group, the hint line reads the worker directly (`workers().exporter.busy()`, `done()`, `total()`), not `exportRun`; **Export Selected...** and **Export All Shown...** are enabled when the filmstrip holds pictures and no batch is running; **Stop Export** is enabled only while one runs. The Quality and Long edge sliders set `affectsPixels = false` (settings, not edits: no re-render), and Long edge snaps to `kExportLongEdgeStep`.
 
 ## Window shell (`shell/`)
 
@@ -2346,7 +2349,6 @@ Every file-scope variable defined under `src/app/` (constants are listed in each
 | `state` | [`editor_state.hpp`](#editor_statehpp) |  |
 | `uiState` | [`ui_state.hpp`](#ui_statehpp) |  |
 | `instance` (inside `workers()`) | [`workers.hpp`](#workershpp) | The one `Workers`: `sam`, `render`, `geometry`, `decode`, `segment`, `sync`, `exporter`, `thumb`, `lutPreview`. Created on first use. |
-| `renderWorker`, `geometryWorker`, `decodeWorker`, `segmentWorker`, `syncWorker`, `exportWorker`, `thumbWorker`, `lutPreviewWorker` | [`workers.hpp`](#workershpp) | Transitional `inline` references into `workers()`; to be deleted once unused. |
 | `gLuts` | [`lut_pane.hpp`](#lut_panehpp) | The rows of the LUTs list, at most `kLutRows`. |
 | `gLutsLoaded` | [`lut_pane.hpp`](#lut_panehpp) | The folder was listed since the pane was last opened. |
 | `gLutPaintCounter` | [`lut_pane.hpp`](#lut_panehpp) | Counter stamping each row's `paintVersion` whenever its preview or text changes. |

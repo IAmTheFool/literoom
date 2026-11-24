@@ -13,11 +13,11 @@
 // in view, so a folder of thousands costs nothing extra. Thumbnails are made
 // by a background thread, nearest-to-the-open-picture first, and the open
 // picture's thumbnail is refreshed (edits included) when you leave it.
-constexpr float kFilmBarH = 26.0f;    // the filter bar on top of the cells
-constexpr float kFilmCellsH = 104.0f; // the row of thumbnails below it
-constexpr float kFilmH = kFilmBarH + kFilmCellsH;
-constexpr float kFilmCellW = 108.0f;
-constexpr size_t kFilmMaxFiles = 5000; // a bigger folder shows its first 5000
+inline constexpr float kFilmBarH = 26.0f;    // the filter bar on top of the cells
+inline constexpr float kFilmCellsH = 104.0f; // the row of thumbnails below it
+inline constexpr float kFilmH = kFilmBarH + kFilmCellsH;
+inline constexpr float kFilmCellW = 108.0f;
+inline constexpr size_t kFilmMaxFiles = 5000; // a bigger folder shows its first 5000
 
 // makeThumb / ThumbWorker / kFilmThumbW,H live in thumb_worker.hpp.
 // (the one ThumbWorker is workers().thumb, app/workers.hpp)
@@ -27,7 +27,7 @@ using VcMap = std::map<std::string, std::vector<int>>; // see listVirtualCopies
 
 // Adds one entry. The name index is keyed by the path's own last part, so a
 // virtual copy ("photo.jpg|vc2") never collides with its picture.
-static void filmPushEntry(FilmStrip &f, const std::string &path,
+inline void filmPushEntry(FilmStrip &f, const std::string &path,
                           const std::string &name, int copy) {
   FilmEntry e;
   e.path = path;
@@ -39,7 +39,7 @@ static void filmPushEntry(FilmStrip &f, const std::string &path,
 
 // A picture, then its virtual copies (`copies`: the folder's, by lower-case
 // name).
-static void filmPushWithCopies(FilmStrip &f, const std::string &path,
+inline void filmPushWithCopies(FilmStrip &f, const std::string &path,
                                const std::string &name, const VcMap &copies) {
   filmPushEntry(f, path, name, 0);
   if (const auto it = copies.find(filmLower(name)); it != copies.end())
@@ -47,7 +47,7 @@ static void filmPushWithCopies(FilmStrip &f, const std::string &path,
       filmPushEntry(f, vcPath(path, n), name, n);
 }
 
-static FilmStrip filmListFolder(const std::string &folder) {
+inline FilmStrip filmListFolder(const std::string &folder) {
   FilmStrip f;
   f.folder = folder;
   const std::filesystem::path base = fsPath(folder);
@@ -60,7 +60,7 @@ static FilmStrip filmListFolder(const std::string &folder) {
 // The strip shows `view`: the files that pass the filter. The open picture and
 // the one being opened always stay in, so rating the picture you are looking at
 // under a filter can't make it vanish. UI thread only.
-static void filmRebuildView() {
+inline void filmRebuildView() {
   FilmStrip &f = state.film;
   f.view.clear();
   const bool all = !f.filter.active();
@@ -74,19 +74,19 @@ static void filmRebuildView() {
 }
 
 // Where file `i` sits in the strip, or -1 if it isn't shown.
-static int filmViewPos(int i) {
+inline int filmViewPos(int i) {
   const std::vector<int> &v = state.film.view;
   const auto it = std::lower_bound(v.begin(), v.end(), i);
   return it != v.end() && *it == i ? static_cast<int>(it - v.begin()) : -1;
 }
 
-static void filmClampScroll() {
+inline void filmClampScroll() {
   FilmStrip &f = state.film;
   const float total = static_cast<float>(f.view.size()) * kFilmCellW;
   f.scrollX = std::clamp(f.scrollX, 0.0f, std::max(0.0f, total - f.viewW));
 }
 
-static void filmEnsureVisible(int i) {
+inline void filmEnsureVisible(int i) {
   FilmStrip &f = state.film;
   const int pos = i < 0 ? -1 : filmViewPos(i);
   if (pos < 0)
@@ -103,7 +103,7 @@ static void filmEnsureVisible(int i) {
 
 // Points the thumbnail worker at the pictures that still lack one, nearest
 // to the target first.
-static void filmQueueThumbs() {
+inline void filmQueueThumbs() {
   const FilmStrip &f = state.film;
   const int n = static_cast<int>(f.files.size());
   std::vector<std::string> todo;
@@ -127,7 +127,7 @@ static void filmQueueThumbs() {
 }
 
 // A strip holding exactly `paths` (already sorted). All come from one folder.
-static void filmAdoptFiles(const std::vector<std::string> &paths) {
+inline void filmAdoptFiles(const std::vector<std::string> &paths) {
   FilmStrip next;
   next.visible = state.film.visible;
   VcMap copies;
@@ -151,7 +151,7 @@ static void filmAdoptFiles(const std::vector<std::string> &paths) {
 
 // Makes the folder `folder` the filmstrip's. False (nothing changed) if it
 // holds no JPEG / PNG pictures.
-static bool filmAdoptFolder(const std::string &folder) {
+inline bool filmAdoptFolder(const std::string &folder) {
   FilmStrip next = filmListFolder(folder);
   if (next.files.empty())
     return false;
@@ -165,7 +165,7 @@ static bool filmAdoptFolder(const std::string &folder) {
 // The open picture changed (or was just opened): follow it. Re-lists the
 // folder if it is a different one, selects the picture, scrolls to it and
 // re-aims the thumbnail worker. Call after loadSidecar().
-static void filmSync(const std::string &imagePath) {
+inline void filmSync(const std::string &imagePath) {
   FilmStrip &f = state.film;
   const std::filesystem::path p = fsPath(imagePath);
   std::string folder = u8ToString(p.parent_path());
@@ -195,7 +195,7 @@ static void filmSync(const std::string &imagePath) {
 
 // The open picture is about to be replaced: if it was edited, make its
 // thumbnail show the edits.
-static void filmLeave() {
+inline void filmLeave() {
   FilmStrip &f = state.film;
   if (f.current < 0 || static_cast<size_t>(f.current) >= f.files.size() ||
       !state.image || state.adjust.version() == f.thumbVersion)
@@ -210,7 +210,7 @@ static void filmLeave() {
 }
 
 // Called when a sidecar file was written for `path`.
-static void filmMarkEdited(const std::string &path) {
+inline void filmMarkEdited(const std::string &path) {
   FilmStrip &f = state.film;
   const auto it = f.byName.find(filmLower(baseName(path)));
   if (it == f.byName.end())
@@ -224,7 +224,7 @@ static void filmMarkEdited(const std::string &path) {
 
 // A batch rating finished for `path`: the strip shows its new rating, flag and
 // label. (If a filter is on, the picture may now appear or disappear.)
-static void filmApplyMeta(const std::string &path, const PhotoMeta &m) {
+inline void filmApplyMeta(const std::string &path, const PhotoMeta &m) {
   FilmStrip &f = state.film;
   const auto it = f.byName.find(filmLower(baseName(path)));
   if (it == f.byName.end() || static_cast<int>(it->second) == f.current)
@@ -238,7 +238,7 @@ static void filmApplyMeta(const std::string &path, const PhotoMeta &m) {
 }
 
 // UI thread: takes in the thumbnails the worker has made.
-static void collectThumbJobs() {
+inline void collectThumbJobs() {
   bool metaChanged = false;
   for (auto &r : workers().thumb.collect()) {
     FilmStrip &f = state.film;
@@ -274,11 +274,11 @@ static void collectThumbJobs() {
     filmRebuildView(); // a filter is waiting for these
 }
 
-static void adoptDecoded(DecodeWorker::Result &&r); // defined below
+inline void adoptDecoded(DecodeWorker::Result &&r); // defined below
 
 // Opens the picture at index `i` (same background decode as File > Open; a
 // virtual copy of the picture that is already open reuses its pixels instead).
-static void filmOpenIndex(int i) {
+inline void filmOpenIndex(int i) {
   FilmStrip &f = state.film;
   if (i < 0 || static_cast<size_t>(i) >= f.files.size() || i == f.target ||
       state.dragging || syncBusy())
@@ -310,7 +310,7 @@ static void filmOpenIndex(int i) {
 
 // Left / Right: the previous / next picture (relative to the one asked for
 // last, so quick repeats keep moving).
-static void filmStep(int d) {
+inline void filmStep(int d) {
   const FilmStrip &f = state.film;
   if (f.view.empty())
     return;
@@ -323,19 +323,19 @@ static void filmStep(int d) {
   filmOpenIndex(f.view[static_cast<size_t>(pos)]);
 }
 
-static void filmScrollBy(float dx) {
+inline void filmScrollBy(float dx) {
   state.film.scrollX += dx;
   filmClampScroll();
   state.film.dirty = true;
 }
 
-static void filmClearSelection() {
+inline void filmClearSelection() {
   for (FilmEntry &e : state.film.files)
     e.selected = false;
   state.film.dirty = true;
 }
 
-static void filmSelectAll() { // only what the strip shows: Sync Settings must
+inline void filmSelectAll() { // only what the strip shows: Sync Settings must
                               // not reach hidden pictures
   for (FilmEntry &e : state.film.files)
     e.selected = false;
@@ -348,12 +348,12 @@ static void filmSelectAll() { // only what the strip shows: Sync Settings must
 // Five stars ("at least N", click the lit one again to switch it off), Pick and
 // Reject, five color labels, and "Clear" while a filter is on. Painting and
 // clicking both read the same list, so they can't disagree.
-constexpr float kBarPad = 8.0f, kBarBtn = 22.0f, kBarGap = 14.0f;
-constexpr float kBarPickW = 38.0f, kBarRejectW = 52.0f, kBarClearW = 44.0f;
-constexpr std::array<Color, kLabelCount> kLabelColors = {
+inline constexpr float kBarPad = 8.0f, kBarBtn = 22.0f, kBarGap = 14.0f;
+inline constexpr float kBarPickW = 38.0f, kBarRejectW = 52.0f, kBarClearW = 44.0f;
+inline constexpr std::array<Color, kLabelCount> kLabelColors = {
     Color{225, 70, 70}, Color{232, 196, 60}, Color{80, 185, 100},
     Color{70, 130, 230}, Color{165, 100, 215}};
-static const char *const kLabelDisplay[kLabelCount] = {"Red", "Yellow", "Green",
+inline const char *const kLabelDisplay[kLabelCount] = {"Red", "Yellow", "Green",
                                                        "Blue", "Purple"};
 
 struct FilmBarItem {
@@ -363,7 +363,7 @@ struct FilmBarItem {
   float x = 0.0f, w = 0.0f;
 };
 
-static std::vector<FilmBarItem> filmBarItems() {
+inline std::vector<FilmBarItem> filmBarItems() {
   std::vector<FilmBarItem> v;
   float x = kBarPad;
   auto add = [&](FilmBarItem::Kind k, int n, float w) {
@@ -392,7 +392,7 @@ static std::vector<FilmBarItem> filmBarItems() {
 
 // The filter changed: re-pick what the strip shows. Nothing hidden stays
 // selected (Sync Settings would write into it unseen).
-static void filmFilterChanged() {
+inline void filmFilterChanged() {
   FilmStrip &f = state.film;
   filmRebuildView();
   for (size_t i = 0; i < f.files.size(); ++i)
@@ -403,7 +403,7 @@ static void filmFilterChanged() {
   f.dirty = true;
 }
 
-static void filmBarClick(float x) {
+inline void filmBarClick(float x) {
   FilmStrip &f = state.film;
   for (const FilmBarItem &it : filmBarItems()) {
     if (x < it.x || x >= it.x + it.w)
@@ -437,7 +437,7 @@ static void filmBarClick(float x) {
 // picture in the selection, Shift+click selects the range from the last one
 // clicked (among the pictures shown). The open picture joins the selection the
 // first time, so it is part of the range.
-static void filmClick(float localX, float localY, const KeyModifiers &mods) {
+inline void filmClick(float localX, float localY, const KeyModifiers &mods) {
   FilmStrip &f = state.film;
   if (localY < kFilmBarH) {
     filmBarClick(localX);
@@ -481,17 +481,17 @@ static void filmClick(float localX, float localY, const KeyModifiers &mods) {
   filmOpenIndex(i);
 }
 
-static void toggleFilmstrip() {
+inline void toggleFilmstrip() {
   state.film.visible = !state.film.visible;
   state.film.dirty = true;
 }
 
-static bool filmstripShown() {
+inline bool filmstripShown() {
   return state.film.visible && !state.film.files.empty();
 }
 
 // File > Open Folder: lists the folder and opens its first picture.
-static void openFolder() {
+inline void openFolder() {
   if (syncBusy())
     return;
   auto dir = openFolderPicker("Open Folder");
@@ -505,7 +505,7 @@ static void openFolder() {
   filmOpenIndex(0);
 }
 
-static std::string starsText(int n) {
+inline std::string starsText(int n) {
   std::string s;
   for (int i = 0; i < n; ++i)
     s += "\xE2\x98\x85"; // U+2605 BLACK STAR
@@ -520,7 +520,7 @@ static std::string starsText(int n) {
 // every repaint (scroll, hover, selection). thumbTexOf holds the source image
 // so its address cannot be reused while it is compared. Null if there is no
 // thumbnail or the texture could not be made.
-static const std::shared_ptr<CanvasTexture> &filmThumbTexture(const FilmEntry &e) {
+inline const std::shared_ptr<CanvasTexture> &filmThumbTexture(const FilmEntry &e) {
   if (e.thumbTexOf != e.thumb) {
     e.thumbTex.reset();
     e.thumbTexOf = e.thumb;
@@ -533,7 +533,7 @@ static const std::shared_ptr<CanvasTexture> &filmThumbTexture(const FilmEntry &e
   return e.thumbTex;
 }
 
-static void paintFilmstrip(CanvasContext &ctx) {
+inline void paintFilmstrip(CanvasContext &ctx) {
   FilmStrip &f = state.film;
   const float W = ctx.width();
   f.viewW = W;
@@ -735,4 +735,3 @@ static void paintFilmstrip(CanvasContext &ctx) {
   }
 }
 // END filmstrip
-

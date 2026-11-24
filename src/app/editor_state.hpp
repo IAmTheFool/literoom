@@ -11,8 +11,8 @@
 // Selection-drag "handle" bitmask: which edges of the selection a drag is
 // moving. Two bits (e.g. L|T) = a corner; one bit = an edge; kEdgeMove =
 // the whole rectangle.
-constexpr int kEdgeL = 1, kEdgeR = 2, kEdgeT = 4, kEdgeB = 8;
-constexpr int kEdgeMove = 16;
+inline constexpr int kEdgeL = 1, kEdgeR = 2, kEdgeT = 4, kEdgeB = 8;
+inline constexpr int kEdgeMove = 16;
 
 // Aspect-ratio presets in the Crop pane. ratio (width / height): 0 = free,
 // negative = "same as the image being cropped".
@@ -20,7 +20,7 @@ struct CropAspect {
   const char *label;
   float ratio;
 };
-static const std::array<CropAspect, 6> kCropAspects = {{
+inline const std::array<CropAspect, 6> kCropAspects = {{
     {"Free", 0.0f},
     {"Original", -1.0f},
     {"1:1", 1.0f},
@@ -382,12 +382,12 @@ struct EditorState {
   bool wbPicking = false;
 };
 
-static EditorState state;
+inline EditorState state;
 
 // Shows `msg` in the status bar. Kept to one short line: newlines (library
 // error strings sometimes have them) become spaces, and long text is cut on
 // a UTF-8 boundary with an ellipsis.
-static void setStatus(std::string msg, bool isError) {
+inline void setStatus(std::string msg, bool isError) {
   constexpr size_t kMaxLen = 110;
   for (char &c : msg)
     if (c == '\n' || c == '\r')
@@ -402,14 +402,14 @@ static void setStatus(std::string msg, bool isError) {
   state.statusMsg = std::move(msg);
   state.statusIsError = isError;
 }
-static void clearStatus() {
+inline void clearStatus() {
   state.statusMsg.clear();
   state.statusIsError = false;
 }
 
 // Sets the zoom from a device-pixel zoom (1.0 = 100%, pixel-exact) and derives
 // the logical scale everything else uses. Does not mark dirty.
-static void applyZoomDev(float zoomDev) {
+inline void applyZoomDev(float zoomDev) {
   state.zoomDev = std::clamp(zoomDev, kZoomMin, kZoomMax);
   state.zoom = state.zoomDev / state.dpr;
 }

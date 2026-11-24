@@ -37,7 +37,12 @@
 #include <string>
 #include <utility>
 #include <vector>
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX // windows.h must not define min()/max() macros (std::min/max)
+#endif
+#include <windows.h> // MAX_PATH, GetModuleFileNameW, WideCharToMultiByte
+#else
 #include <unistd.h> // readlink
 #endif
 

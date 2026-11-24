@@ -2,11 +2,12 @@
 // #define LITEUI_IMPLEMENTATION. Helpers and TEST_CASEs live in namespace image_codec16_cases
 // so they cannot collide with other cases.
 //
-// image_codec16_test.cpp - 16-bit PNG reading (liteui's decodeFileBuffer, through decodeImage16) and
-// writing (libpng on Linux, WIC on Windows), what liteui's header probe says about the vectors, and the
-// widen / narrow conversions.
-//  * The decoder is checked against PNG files made by an independent writer (image_codec16_vectors.hpp:
-//    its own zlib + chunk code, distinctive 16-bit values, so a byte-order slip cannot hide).
+// image_codec16_test.cpp - 16-bit PNG reading (decodeImage16, which asks liteui's decodeFileInto) and
+// writing (liteui's encodePng, through cases/encode_helpers.hpp), what liteui's header probe says about the
+// vectors, and the widen / narrow conversions.
+//  * The decoder is checked against PNG files made by an independent writer. The vectors are the kPng_* / kExp_*
+//    arrays in this file (namespace image_codec16_cases): a stand-alone Python PNG writer with its own zlib +
+//    chunk code made them, with distinctive 16-bit values so a byte-order slip cannot hide.
 //  * The encoder is checked by reading its output with liteui's 8-bit decoder (every sample must come back
 //    as the nearest byte) and by a round trip.
 // Links liteui like image_codec_test does.

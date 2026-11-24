@@ -63,7 +63,7 @@ static void applyMetaPatch(const MetaPatch &patch, const std::string &message) {
   job.metaOnly = true;
   job.patch = patch;
   const size_t n = job.paths.size();
-  syncWorker.submit(std::move(job));
+  workers().sync.submit(std::move(job));
   setStatus(message + " \u2014 updating " + std::to_string(n) +
                 " selected photo(s)...",
             false);
@@ -98,7 +98,7 @@ static void labelPhoto(int c) {
                           : std::string("Label cleared"));
 }
 
-static void adoptDecoded(DecodeWorker::Result &&r) {
+inline void adoptDecoded(DecodeWorker::Result &&r) {
   if (!r.image) {
     // Leave whatever image is already open untouched and say what happened.
     setStatus("Couldn't open " + pictureLabel(r.path) + ": " +
@@ -118,9 +118,9 @@ static void adoptDecoded(DecodeWorker::Result &&r) {
 
   // Anything still in flight belongs to the previous picture; its result
   // must never be adopted over the new one.
-  renderWorker.invalidate();
-  geometryWorker.invalidate();
-  segmentWorker.invalidate();
+  workers().render.invalidate();
+  workers().geometry.invalidate();
+  workers().segment.invalidate();
   state.mask.objPending = {};
   ++state.imageSerial;
 
@@ -150,7 +150,7 @@ static void adoptDecoded(DecodeWorker::Result &&r) {
 
 // Non-blocking; polled once per frame from flushPendingAdjust.
 static void collectDecodeJob() {
-  if (auto r = decodeWorker.collect())
+  if (auto r = workers().decode.collect())
     adoptDecoded(std::move(*r));
 }
 

@@ -16,7 +16,7 @@
 // from there. Nothing runs while no render is outstanding, so an idle editor
 // costs nothing.
 
-static void adoptFullRender(RenderWorker::Result &&r) {
+inline void adoptFullRender(RenderWorker::Result &&r) {
   state.image = std::move(r.image);
   state.previewImage.reset(); // the real thing replaces the stand-in
   state.histStale = true;
@@ -24,7 +24,7 @@ static void adoptFullRender(RenderWorker::Result &&r) {
 }
 
 // Non-blocking; polled once per frame from flushPendingAdjust.
-static void collectFullRender() {
+inline void collectFullRender() {
   try {
     if (auto r = workers().render.collect())
       adoptFullRender(std::move(*r));
@@ -35,7 +35,7 @@ static void collectFullRender() {
 
 // Blocking: makes `state.image` current. For the few places that need the
 // real pixels *now* (export).
-static void finishFullRender() {
+inline void finishFullRender() {
   if (!workers().render.outstanding())
     return;
 
@@ -65,7 +65,7 @@ static void finishFullRender() {
 }
 // A drag starts (or continues) on the preview path. A full-resolution render
 // still in flight would be for values the drag is about to change, so drop it.
-static void enterDrag(bool isAngle) {
+inline void enterDrag(bool isAngle) {
   if (!state.dragging)
     workers().render.invalidate();
   state.dragging = true; // switches recompute+paint to the preview path
@@ -88,7 +88,7 @@ static void enterDrag(bool isAngle) {
 //    (crop, rotate, straighten, a newly opened file), because then
 //    `source`, `image`, the document size and the crop selection must all
 //    change together.
-static void updateImageFromAdjustments() {
+inline void updateImageFromAdjustments() {
   if (!state.original)
     return;
   clearStatus(); // the image is about to change: an old message is stale
@@ -131,7 +131,7 @@ static void updateImageFromAdjustments() {
 // instead of the full-resolution original. Only touches state.previewImage;
 // state.image (and so the document size, export, and info labels) is left
 // alone until the drag ends.
-static void updatePreviewFromAdjustments() {
+inline void updatePreviewFromAdjustments() {
   if (!state.previewBase)
     return;
   state.previewImage =

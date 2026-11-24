@@ -199,7 +199,7 @@ static std::vector<ObjectPrompt> objectCurrentPrompts(int mask, int part) {
 }
 
 static void clearSelectedObject() {
-  segmentWorker.invalidate();
+  workers().segment.invalidate();
   state.mask.objPending = {};
   const size_t part = static_cast<size_t>(selPart());
   maskEditDiscrete([part](Mask &m) {
@@ -212,14 +212,14 @@ static void clearSelectedObject() {
 }
 
 static void objectPrefetch() {
-  if (!state.original || segmentWorker.outstanding() ||
+  if (!state.original || workers().segment.outstanding() ||
       state.mask.encodedKey == state.imageSerial)
     return;
   SegmentRequest req;
   req.image = state.original;
   req.imageKey = state.imageSerial;
   req.prefetch = true;
-  segmentWorker.submit(std::move(req));
+  workers().segment.submit(std::move(req));
   setStatus("Preparing object selection...", false);
 }
 
@@ -272,7 +272,7 @@ static void objectPress(float lx, float ly, bool rightClick) {
   req.maskIdx = mask;
   req.part = part;
   state.mask.objPending = {mask, part, std::move(prompts)};
-  segmentWorker.submit(std::move(req));
+  workers().segment.submit(std::move(req));
   setStatus(state.mask.encodedKey == state.imageSerial
                 ? "Selecting object..."
                 : "Analyzing image (first selection takes a moment)...",
