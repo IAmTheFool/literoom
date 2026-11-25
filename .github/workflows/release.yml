@@ -101,8 +101,10 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # -LE headers: the header self-containment check already ran in build.yml
+      # on this commit, so the release job does not compile every header again.
       - name: Test
-        run: ctest --preset ${{ matrix.preset }}
+        run: ctest --preset ${{ matrix.preset }} -LE headers
 
       # ---- Windows: zip + Inno Setup installer ----
       - name: Package (Windows)

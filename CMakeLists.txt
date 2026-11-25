@@ -240,6 +240,11 @@ target_link_libraries(header_check PRIVATE liteui::liteui Threads::Threads)
 if(MSVC)
     target_compile_options(header_check PRIVATE /utf-8 /bigobj)
 endif()
+# In an ONNX build, give the check the same define and include path as the app,
+# so headers with #ifdef LITEROOM_ONNX sections are checked on that side too.
+if(LITEROOM_ONNX)
+    target_link_libraries(header_check PRIVATE literoom_onnxruntime)
+endif()
 
 # ------------------------------------------------------------------------
 # Tests (Catch2 v3)
@@ -390,9 +395,9 @@ if(LITEROOM_TESTS)
     endif()
 
     # ---- odr: one object per shared thing, however many .cpp files include the app ----
-    # src/app/*.hpp are meant to be included by main.cpp only, but nothing stops a
-    # second .cpp from including them, and a `static` object or function in a header
-    # is one COPY PER .cpp (two render workers, two `state`s, ...). They are `inline`
+    # src/app/*.hpp are self-contained and can be included from any .cpp (the
+    # header_check target does exactly that), and a `static` object or function in
+    # a header is one COPY PER .cpp (two render workers, two `state`s, ...). They are `inline`
     # now; this test keeps it that way. It is an executable of two translation units:
     #   tests/odr_first_tu.cpp   includes src/main.cpp (main() renamed) and has the real
     #                            main(): it compares what both units see
@@ -422,4 +427,16 @@ if(LITEROOM_TESTS)
         add_test(NAME literoom_odr COMMAND literoom_odr_test)
         set_tests_properties(literoom_odr PROPERTIES LABELS odr TIMEOUT 60)
     endif()
+
+    # ---- header_check as a test: every src/**/*.hpp compiles as its own TU ----
+    # The header_check target is EXCLUDE_FROM_ALL (122+ extra compiles would slow
+    # every normal build), so a plain build and ctest never touch it by themselves.
+    # This test builds it, so a missing #include shows up as a failed test:
+    #   ctest -L headers --output-on-failure
+    # CI builds the target in its own step on one MSVC and one GCC job, and runs
+    # ctest -LE headers everywhere so it is not built a second time.
+    add_test(NAME literoom_header_check
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                --target header_check --config $<CONFIG> --parallel)
+    set_tests_properties(literoom_header_check PROPERTIES LABELS headers TIMEOUT 900)
 endif()

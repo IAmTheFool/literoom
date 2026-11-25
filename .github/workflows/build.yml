@@ -14,9 +14,14 @@ jobs:
       matrix:
         include:
           - { name: "Windows MSVC Debug",       os: windows-latest, preset: msvc-debug }
-          - { name: "Windows MSVC Release",     os: windows-latest, preset: msvc-release }
+          # headers: true = also run the header self-containment check (every
+          # src/**/*.hpp compiled on its own). One job per compiler is enough:
+          # the check does not depend on Debug/Release or on sanitizers, but
+          # MSVC and GCC pull in different standard headers transitively, so
+          # each compiler can catch a missing #include the other one misses.
+          - { name: "Windows MSVC Release",     os: windows-latest, preset: msvc-release, headers: true }
           - { name: "Linux GCC Debug",          os: ubuntu-latest,  preset: gcc-debug }
-          - { name: "Linux GCC Release",        os: ubuntu-latest,  preset: gcc-release }
+          - { name: "Linux GCC Release",        os: ubuntu-latest,  preset: gcc-release,  headers: true }
           - { name: "Linux GCC Debug + ASan",   os: ubuntu-latest,  preset: gcc-debug-asan }
 
     steps:
@@ -46,7 +51,16 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # Fails when a header uses something it does not #include itself (it only
+      # compiled before because main.cpp happened to include that thing first).
+      # The target is EXCLUDE_FROM_ALL, so the Build step above skips it.
+      - name: Header self-containment check
+        if: matrix.headers
+        run: cmake --build --preset ${{ matrix.preset }} --target header_check --parallel
+
       # literoom_golden_render is skipped (exit code 77) when there is no golden
       # file for the compiler/config (e.g. GNU Release), so it never fails here.
+      # -LE headers: the header check has its own step above (and only runs on
+      # two jobs), so ctest must not build it again on every job.
       - name: Test
-        run: ctest --preset ${{ matrix.preset }}
+        run: ctest --preset ${{ matrix.preset }} -LE headers
