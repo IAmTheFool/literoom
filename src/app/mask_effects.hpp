@@ -1,9 +1,19 @@
 // app/mask_effects.hpp: mask effects: Amount, Color Mix, Grading, Curve
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <cmath>   // std::round, std::lround
+#include <cstddef> // size_t
+#include <string>  // std::string, std::to_string
+
+#include "liteui.hpp"            // View
+#include "app/constants.hpp"     // kMaskTrackW, mixBandColor
+#include "app/editor_state.hpp"  // inline EditorState state
+#include "app/masks.hpp"         // kMaskCtl* ids, selectedMask, selMask, maskEdit
+#include "app/widgets.hpp"       // SliderSpec, buildSliderRow
+#include "color/color_grade.hpp" // GradeWheel
+#include "color/color_mix.hpp"   // MixChan, kMix*, mixIndex, mixBandName
+#include "core/adjustments.hpp"  // AdjId (the static_assert below counts AdjId::Count)
+#include "mask/mask.hpp"         // Mask
 
 // ---------------- Mask effects: Amount, Color Mix, Grading, Curve ----------
 // The Effect tab of the right-hand mask panel. Everything here edits the

@@ -1,9 +1,13 @@
 // app/constants.hpp: layout constants and the color palette
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <cstddef>
+#include <string>
+
+#include "liteui.hpp"               // Color
+#include "color/color_mix.hpp"      // kMixBandCount
+#include "io/lut_library.hpp"       // kLutMaxFiles
+#include "workers/thumb_worker.hpp" // kFilmThumbW, kFilmThumbH
 
 // ---------------- Layout constants ----------------
 inline constexpr float kTitlebarH = 36.0f;

@@ -1,10 +1,23 @@
 // app/saved_edits.hpp: saved edits: the sidecar file
-//
-// UI-shell code split out of main.cpp. A plain move, apart from the
-// state.sidecarBlocked guard in saveSidecar.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <filesystem>   // std::filesystem::path, remove, rename
+#include <fstream>      // std::ofstream, std::ios
+#include <string>       // std::string, std::to_string
+#include <system_error> // std::error_code
+
+#include "app/editor_state.hpp" // inline EditorState state, setStatus, MaskUi
+#include "io/color_tag.hpp"     // color_tag::ColorTag, colorTagOf
+#include "io/exif.hpp"          // exif::PhotoInfo
+#include "io/file_utils.hpp"    // baseName
+#include "io/image_meta.hpp"    // photoInfoOf
+#include "io/sidecar.hpp"       // sidecarFileText
+#include "io/sidecar_file.hpp"  // sidecarFilePath
+#include "io/virtual_copy.hpp"  // vcImageOf, vcCopyOf
+
+// Defined in app/filmstrip.hpp, which comes after this header (it uses
+// flushSidecar / pictureLabel), so it is declared here, not included.
+inline void filmMarkEdited(const std::string &path);
 
 // ---------------- Saved edits: the sidecar file ----------------
 // photo.jpg's edits live in photo.jpg.literoom.json beside it. They are

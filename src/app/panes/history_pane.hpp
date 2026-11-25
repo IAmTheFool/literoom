@@ -1,9 +1,17 @@
 // app/panes/history_pane.hpp: the History pane (buildHistoryPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string
+#include <utility>    // std::move
+
+#include "liteui.hpp"              // View, Text, Size, FlexDirection, Display, EdgeInsets
+
+#include "app/constants.hpp"       // kHistoryActivity, kColorTextMuted
+#include "app/editor_state.hpp"    // inline EditorState state
+#include "app/history_panel.hpp"   // buildHistoryRow 
+#include "edit/adjustment_set.hpp" // kMaxUndoSteps
 
 // -- "History" pane: every undo step, newest first. Click to jump.
 inline View buildHistoryPane() {

@@ -1,10 +1,13 @@
 // app/crop.hpp: crop selection helpers
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
+#include <cstddef>  // size_t
+
+#include "app/constants.hpp"     // kCropActivity
+#include "app/editor_state.hpp"  // state, CropUi, kCropAspects
+#include "core/geometry.hpp"     // CropRect, Orient
+#include "core/raster_ops.hpp"   // orientImage, rotateArbitrary, cropImage, makePreviewBase
+#include "core/wide_chain.hpp"   // wide_chain::oriented / rotated / cropped
 // ---------------- Crop ----------------
 
 inline bool cropToolActive() {

@@ -1,9 +1,21 @@
 // app/panes/rotate_pane.hpp: the Rotate pane (buildRotatePane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cstdio>     // std::snprintf
+#include <functional> // std::function
+#include <string>     // std::string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Justify, Align,
+                      // FontWeight, Display, EdgeInsets
+
+#include "app/constants.hpp"       // kRotateActivity, kColor*
+#include "app/editor_state.hpp"    // inline EditorState state
+#include "app/geometry_worker.hpp" // geometryBusy
+#include "app/rotate.hpp"  // applyGeoOp, resetOrientation, setAngleFromSlider,
+                           // setAngleDiscrete, nudgeAngle, setCornerMode
+#include "app/widgets.hpp" // SliderSpec, buildSliderRow, sidebarButton
+#include "core/geometry.hpp" // GeoOp, kAngleMax
 
 // -- "Rotate" pane: 90-degree turns, mirrors, and a reset. Lossless (pure
 // pixel moves) and each button press is one undo step.
@@ -12,8 +24,10 @@ inline View buildRotatePane() {
   rotatePane.style.width = Size::full();
   rotatePane.style.direction = FlexDirection::Column;
   rotatePane.style.gap = 6.0f;
-  rotatePane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == kRotateActivity ? Display::Flex : Display::None; });
+  rotatePane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kRotateActivity ? Display::Flex
+                                                   : Display::None;
+  });
 
   Text rotateHint;
   rotateHint.label = std::function<std::string()>([]() -> std::string {

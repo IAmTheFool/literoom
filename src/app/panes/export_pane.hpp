@@ -1,9 +1,23 @@
 // app/panes/export_pane.hpp: the Export pane (buildExportPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <algorithm>  // std::clamp
+#include <cmath>      // std::lround
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Display, EdgeInsets
+
+#include "app/constants.hpp"     // kExportActivity, kColorTextMuted
+#include "app/editor_state.hpp"  // inline EditorState state
+#include "app/export.hpp"        // exportSelected, exportAllShown, stopExport
+#include "app/meta_commands.hpp" // exportImage
+#include "app/widgets.hpp"       // SliderSpec, buildSliderRow, sidebarButton,
+                                 // kExportLongEdgeMin/Max/Step
+#include "app/workers.hpp"       // workers() (.exporter)
+#include "core/geometry.hpp"     // Dims
+#include "core/raster_ops.hpp"   // fitLongEdge
 
 // -- "Export" pane: format, JPEG quality, metadata, and the Export button.
 // (The File menu's Export... and Ctrl+E use these same settings.)
@@ -12,8 +26,10 @@ inline View buildExportPane() {
   exportPane.style.width = Size::full();
   exportPane.style.direction = FlexDirection::Column;
   exportPane.style.gap = 6.0f;
-  exportPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == kExportActivity ? Display::Flex : Display::None; });
+  exportPane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kExportActivity ? Display::Flex
+                                                   : Display::None;
+  });
 
   Text exportHint;
   exportHint.label = std::function<std::string()>([]() -> std::string {
@@ -184,8 +200,9 @@ inline View buildExportPane() {
       sidebarButton("Export All Shown...", exportAllShown, {}, false, [] {
         return !state.film.files.empty() && !workers().exporter.busy();
       }));
-  batchOptions.addChild(sidebarButton("Stop Export", stopExport, {}, false,
-                                      [] { return workers().exporter.busy(); }));
+  batchOptions.addChild(sidebarButton("Stop Export", stopExport, {}, false, [] {
+    return workers().exporter.busy();
+  }));
   exportPane.addChild(std::move(batchOptions));
 
   return exportPane;

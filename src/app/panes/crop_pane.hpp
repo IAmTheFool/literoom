@@ -1,9 +1,21 @@
 // app/panes/crop_pane.hpp: the Crop pane (buildCropPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cmath>      // std::lround
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Display,
+                      // EdgeInsets, FontWeight
+
+#include "app/constants.hpp"    // kCropActivity, kColorTextMuted, kColorTextMid
+#include "app/crop.hpp"         // resetCropSelection, setCropAspect
+#include "app/crop_tool.hpp"    // applyCrop, removeCrop
+#include "app/editor_state.hpp" // inline EditorState state, kCropAspects
+#include "app/geometry_worker.hpp" // geometryBusy
+#include "app/widgets.hpp"         // sidebarButton
 
 // -- "Crop" pane: aspect-ratio presets, a live readout, and the
 // Apply/Reset/Remove buttons. The selection itself is drawn and dragged
@@ -13,8 +25,10 @@ inline View buildCropPane() {
   cropPane.style.width = Size::full();
   cropPane.style.direction = FlexDirection::Column;
   cropPane.style.gap = 6.0f;
-  cropPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == kCropActivity ? Display::Flex : Display::None; });
+  cropPane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kCropActivity ? Display::Flex
+                                                 : Display::None;
+  });
 
   Text cropHint;
   cropHint.label = std::function<std::string()>([]() -> std::string {

@@ -1,9 +1,24 @@
 // app/color_ui.hpp: Color Mixer and Color Grading UI
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "liteui.hpp"               // View, Color, Size, Text, CanvasImage, CanvasContext, ...
+#include "app/constants.hpp"        // mixBandColor(), kColorTextMuted
+#include "app/editor_state.hpp"     // state
+#include "app/render_update.hpp"    // enterDrag()
+#include "app/ui_state.hpp"         // uiState
+#include "app/widgets.hpp"          // SliderSpec, buildSliderRow(), bindDrag()
+#include "color/color_grade.hpp"    // ColorGrade, GradeWheel, GradeRange, kGradeRangeCount, gradeHueToRgb()
+#include "color/color_mix.hpp"      // MixChan, mixBandName(), kMixMin, kMixMax
 
 // ---------------- Color Mixer UI ----------------
 

@@ -1,144 +1,38 @@
-// Literoom - the photo editor: UI and glue around the engine headers below.
+// Literoom - the photo editor: UI and glue around the engine headers.
+//
+// Every header below includes what it uses, so this file lists only what
+// main() itself touches; the rest arrives through them.
 
 // LITEROOM_NO_LITEUI_IMPL: set only by tests/odr_second_tu.cpp, the second
 // translation unit of the ODR check (liteui's implementation may be compiled into
 // exactly one TU of a program).
+// This define and the include after it must stay the FIRST thing in the file:
+// liteui.hpp turns into the library's implementation only if the define is
+// already visible the first time the header is included.
 #ifndef LITEROOM_NO_LITEUI_IMPL
 #define LITEUI_IMPLEMENTATION
 #endif
 #include "liteui.hpp"
 
-#include <algorithm>
-#include <array>
-#include <condition_variable>
-#include <deque>
-#include <filesystem>
-#include <fstream>
-#include <functional>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <stop_token>
-#include <thread>
-#include <unordered_map>
-#include <variant>
-#include <vector>
+#include <utility> // std::move
+#include <vector>  // std::vector<Activity>
 
-// Engine headers: pure logic with no UI, each covered by its own unit
-// test in tests/ (see CMakeLists.txt). Grouped by folder, lowest layer first.
+#include "app/canvas_view.hpp"    // setDpr
+#include "app/constants.hpp"      // Activity, k*Activity ids, kColorRootBg
+#include "app/editor_state.hpp"   // state.openMenu
+#include "app/saved_edits.hpp"    // flushSidecar
+#include "app/startup_checks.hpp" // verifyAdjustmentSpecs
+#include "app/widgets.hpp"        // applyClickCursors
+#include "app/workers.hpp"        // workers(), WorkersShutdownGuard
 
-// core: shared vocabulary
-#include "core/adjustments.hpp"
-#include "core/auto_tone.hpp"
-#include "core/geometry.hpp"
-#include "core/image16_convert.hpp"
-#include "core/pixel_math.hpp"
-#include "core/raster_ops.hpp"
-#include "core/wide_chain.hpp"
-
-// color
-#include "color/color_grade.hpp"
-#include "color/color_mix.hpp"
-#include "color/color_pass.hpp"
-#include "color/curves.hpp"
-
-// detail effects
-#include "detail/detail_layer.hpp"
-#include "detail/neighbor_fx.hpp"
-
-// masks and object selection
-#include "mask/mask.hpp"
-#include "mask/sam_segmenter.hpp"
-#include "mask/seg_basic.hpp"
-
-// saving and files
-#include "io/color_tag.hpp"
-#include "io/exif.hpp"
-#include "io/file_utils.hpp"
-#include "io/image_codec16.hpp"
-#include "io/image_meta.hpp"
-#include "io/image_source.hpp"
-#include "io/minijson.hpp"
-#include "io/photo_meta.hpp"
-#include "io/preset.hpp"
-#include "io/sidecar_file.hpp"
-
-// edit state and rendering
-#include "edit/adjustment_set.hpp"
-#include "render/histogram.hpp"
-#include "render/render.hpp"
-#include "render/scopes.hpp"
-
-// background work
-#include "workers/export_worker.hpp" 
-
-#include "workers/lut_preview_worker.hpp"
-#include "workers/thumb_worker.hpp"
-
-#include "app/constants.hpp"
-#include "app/workers.hpp" // every background worker, in one place
-#include "app/editor_state.hpp"
-#include "app/ui_state.hpp"
-#include "app/canvas_view.hpp"
-#include "app/render_update.hpp"
-#include "app/crop.hpp"
-#include "app/geometry_worker.hpp"
-#include "app/crop_tool.hpp"
-#include "app/rotate.hpp"
-#include "app/segmentation.hpp"
-#include "app/saved_edits.hpp"
-#include "app/lut_pane.hpp"
-#include "app/sync.hpp"
-#include "app/export.hpp"
-#include "app/filmstrip.hpp"
-#include "app/meta_commands.hpp"
-#include "app/widgets.hpp"
-#include "app/color_ui.hpp"
-#include "app/masks.hpp"
-#include "app/presets.hpp"
-#include "app/snapshots.hpp"
-#include "app/virtual_copies.hpp"
-#include "app/mask_list.hpp"
-#include "app/mask_shapes.hpp"
-#include "app/mask_polygon.hpp"
-#include "app/mask_brush.hpp"
-#include "app/mask_overlays.hpp"
-#include "app/mask_widgets.hpp"
-#include "app/history_panel.hpp"
-#include "app/crop_overlay.hpp"
-#include "app/compare.hpp"
-#include "app/canvas_paint.hpp"
-#include "app/readout.hpp"
-#include "app/wb_picker.hpp"
-#include "app/auto_tone_hist.hpp"
-#include "app/curve_editor.hpp"
-#include "app/mask_effects.hpp"
-#include "app/mask_curve.hpp"
-#include "app/startup_checks.hpp"
-#include "app/panes/pane_helpers.hpp"
-#include "app/panes/info_pane.hpp"
-#include "app/panes/history_pane.hpp"
-#include "app/panes/snapshots_pane.hpp"
-#include "app/panes/adjust_pane.hpp"
-#include "app/panes/presets_pane.hpp"
-#include "app/panes/luts_pane.hpp"
-#include "app/panes/curve_pane.hpp"
-#include "app/panes/mix_pane.hpp"
-#include "app/panes/grade_pane.hpp"
-#include "app/panes/masks_pane.hpp"
-#include "app/panes/crop_pane.hpp"
-#include "app/panes/rotate_pane.hpp"
-#include "app/panes/export_pane.hpp"
-#include "app/shell/shortcuts.hpp"
-#include "app/shell/titlebar.hpp"
-#include "app/shell/activity_bar.hpp"
-#include "app/shell/histogram_view.hpp"
-#include "app/shell/sidebar.hpp"
-#include "app/shell/sidebar_divider.hpp"
-#include "app/shell/center_column.hpp"
-#include "app/shell/mask_panel.hpp"
-#include "app/shell/status_bar.hpp"
+#include "app/shell/activity_bar.hpp"    // buildActivityBar
+#include "app/shell/center_column.hpp"   // buildCenterColumn
+#include "app/shell/mask_panel.hpp"      // addMaskPanel
+#include "app/shell/shortcuts.hpp"       // installShortcuts
+#include "app/shell/sidebar.hpp"         // buildSidebar
+#include "app/shell/sidebar_divider.hpp" // buildSidebarDivider
+#include "app/shell/status_bar.hpp"      // buildStatusBar
+#include "app/shell/titlebar.hpp"        // buildTitlebar
 
 int main() {
   verifyAdjustmentSpecs();

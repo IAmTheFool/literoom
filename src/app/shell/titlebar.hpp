@@ -1,10 +1,31 @@
 // app/shell/titlebar.hpp: the title bar (buildTitlebar)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
 
+#include <string>  // std::string, std::to_string
+#include <utility> // std::move
+#include <vector>  // std::vector
+
+#include "liteui.hpp" // LiteUI, View, Text, Size, Align, FlexDirection, EdgeInsets,
+                      // FontWeight, PointerEvent, MouseButton
+
+#include "app/auto_tone_hist.hpp" // autoTone, toggleClipping, toggleChannelClipping
+#include "app/canvas_view.hpp" // setZoom
+#include "app/compare.hpp"     // toggleBefore, toggleSplit
+#include "app/constants.hpp" // kTitlebarH, kZoomStep, kColorTitlebarBg, kColorTextDark,
+                             // kColorMenuHover, kColorCloseHover
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/export.hpp"       // exportSelected, exportAllShown, stopExport
+#include "app/filmstrip.hpp" // filmStep, filmSelectAll, toggleFilmstrip, openFolder,
+                             // starsText, kLabelDisplay
+#include "app/meta_commands.hpp" // openImage, exportImage, toggleSidebar, ratePhoto,
+                                 // flagPhoto, labelPhoto
+#include "app/presets.hpp"       // copySettings, pasteSettings
+#include "app/rotate.hpp"        // undo, redo, applyGeoOp
+#include "app/sync.hpp"          // syncSettings
+#include "app/virtual_copies.hpp" // createVirtualCopy, deleteVirtualCopy
+#include "app/widgets.hpp"   // MenuItem, menuButton, winButton, titlebarIconBtn
+#include "core/geometry.hpp" // GeoOp
+#include "io/photo_meta.hpp" // PhotoFlag, kMaxRating, kLabelCount
 // Titlebar: title, File/View menus, window controls.
 inline View buildTitlebar(LiteUI &ui) {
   View titlebar;

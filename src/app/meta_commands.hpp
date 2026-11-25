@@ -1,9 +1,44 @@
-// app/meta_commands.hpp: rating, flag and color label commands
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::clamp, std::remove_if, std::sort
+#include <cstddef>   // size_t
+#include <memory>    // std::shared_ptr, std::make_shared
+#include <optional>  // std::optional
+#include <string>    // std::string, std::to_string
+#include <utility>   // std::move
+#include <vector>    // std::vector
+
+#include "liteui.hpp" // openFilesPicker, saveFilePicker,
+                      // liteui_image::jpegSizeOk, kJpegMaxSide,
+                      // encodePng (?)
+
+#include "app/constants.hpp"       // kNoActivity (?), kInfoActivity (?)
+#include "app/crop.hpp"            // syncSource
+#include "app/editor_state.hpp"    // state, FilmStrip, FilmEntry, setStatus,
+                                   // clearStatus, applyZoomDev
+#include "app/filmstrip.hpp"       // filmRebuildView, filmViewPos, filmLeave,
+                                   // filmSync, filmAdoptFiles, filmQueueThumbs,
+                                   // filmOpenIndex, starsText, kLabelDisplay
+#include "app/geometry_worker.hpp" // finishGeometryJob
+#include "app/lut_pane.hpp"        // loadSidecar
+#include "app/render_update.hpp" // updateImageFromAdjustments, finishFullRender
+#include "app/saved_edits.hpp"   // pictureLabel, flushSidecar, announceColorTag
+#include "app/sync.hpp"          // syncBusy
+#include "app/ui_state.hpp"      // uiState
+#include "app/workers.hpp"       // workers()
+#include "core/geometry.hpp"     // Dims
+#include "core/image16_convert.hpp" // toImageBuffer, exportPngOptions
+#include "core/raster_ops.hpp"      // fitLongEdge, resizeToLongEdge
+#include "io/color_tag.hpp"         // color_tag::colorTagOf, carryColorToPng,
+                                    // dropEncoderColor
+#include "io/file_utils.hpp" // baseName, fileExtLower, isJpegPath, naturalLess
+#include "io/photo_meta.hpp" // PhotoMeta, PhotoFlag, MetaPatch, kMaxRating,
+                             // kLabelCount, photoMetaSanitized
+#include "io/virtual_copy.hpp"       // vcImageOf, vcCopyOf
+#include "render/render_core.hpp"    // renderToImage16
+#include "workers/decode_job.hpp"    // DecodeWorker
+#include "workers/export_worker.hpp" // saveJpegFile
+#include "workers/sync_job.hpp"      // SyncJob
 
 // ---------------- Rating, flag and color label (open picture + selection)
 // ---------------- Not edits: no undo step, no History label, adjust.version()
@@ -110,7 +145,7 @@ inline void adoptDecoded(DecodeWorker::Result &&r) {
     state.markDirty();
     return;
   }
-  state.wbPicking = false; // a new picture: the picker must be armed again
+  state.wbPicking = false;      // a new picture: the picker must be armed again
   uiState.resetForNewPicture(); // selections of the previous picture
   clearStatus();
   flushSidecar(); // the picture being replaced keeps its latest edits
@@ -129,7 +164,7 @@ inline void adoptDecoded(DecodeWorker::Result &&r) {
       std::move(r.wide); // null for an 8-bit file; syncSource(true) below
                          // rebuilds the twin chain
   state.imagePath = std::move(r.path);
-  applyZoomDev(1.0f);   // start fresh at 100% on every newly opened image
+  applyZoomDev(1.0f); // start fresh at 100% on every newly opened image
   state.view.scrollX = state.view.scrollY = 0.0f; // centered
   state.adjust.reset(); // and with no adjustment, crop or rotation applied yet
   state.adjust.setOriginalSize(state.original->width, state.original->height);
@@ -280,8 +315,7 @@ inline void exportImage() {
                         state.removeGps, vcImageOf(state.imagePath), &err);
     } else {
       const std::optional<ImageBuffer> buf = toImageBuffer(*outImage);
-      ok = buf &&
-           liteui_image::encodePng(out, *buf, &err, exportPngOptions());
+      ok = buf && liteui_image::encodePng(out, *buf, &err, exportPngOptions());
       if (!buf)
         err = "nothing to write";
     }
@@ -313,6 +347,7 @@ inline void exportImage() {
 }
 
 inline void toggleSidebar() {
-  state.activeActivity = (state.activeActivity == kNoActivity) ? kInfoActivity : kNoActivity;
+  state.activeActivity =
+      (state.activeActivity == kNoActivity) ? kInfoActivity : kNoActivity;
   state.markDirty(); // the crop overlay shows only while the Crop pane is open
 }

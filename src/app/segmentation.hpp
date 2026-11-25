@@ -1,13 +1,15 @@
 // app/segmentation.hpp: the UI-thread glue of object segmentation
-//
-// The engine and the job (SamEngine, SegmentRequest, SegmentResult,
-// runSegmentJob) are pure and live in workers/segment_job.hpp; the worker object
-// is workers().segment and the engine is workers().sam (app/workers.hpp). What
-// is left here commits a finished segmentation into `state`.
-//
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <string>  // std::string
+#include <utility> // std::move
+#include <variant> // std::get_if
+
+#include "app/editor_state.hpp"     // inline EditorState state, setStatus, clearStatus
+#include "app/workers.hpp"          // workers()
+#include "mask/mask.hpp"            // Mask, MaskSet
+#include "mask/mask_object.hpp"     // ObjectShape
+#include "workers/segment_job.hpp"  // SegmentWorker, SegmentRequest, SegmentResult
 
 // UI thread: commits a finished segmentation. Prompts and map land in ONE
 // undo step. A result for a mask/part that is gone (deleted, undone away) is

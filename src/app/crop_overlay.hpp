@@ -1,9 +1,14 @@
 // app/crop_overlay.hpp: paints the crop selection over the picture
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+
+// Draws the crop selection over the image: dimmed surround, rule-of-thirds
+// guides, border, and eight drag handles. Expects the CTM to already be
+// scaled by state.zoom (so everything here is in image pixels), and divides
+// line widths / handle sizes by the zoom to keep them constant on screen.
 #pragma once
+
+#include "liteui.hpp"            // CanvasContext, Color
+#include "app/constants.hpp"     // kColorWhite, kCropHandlePx (if it lives there)
+#include "app/editor_state.hpp"  // state
 
 inline void paintCropOverlay(CanvasContext &ctx) {
   const auto &c = state.crop;

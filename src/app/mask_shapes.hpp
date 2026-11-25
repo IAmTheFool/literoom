@@ -1,9 +1,13 @@
 // app/mask_shapes.hpp: radial, linear and rectangle mask geometry on the canvas
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::min, std::max
+#include <cmath>     // std::cos, std::sin, std::hypot, std::fabs
+
+#include "app/constants.hpp"    // kMaskHitPx
+#include "app/editor_state.hpp" // inline EditorState state
+#include "mask/mask_geom.hpp"   // RadialShape, LinearShape, kMaskMinRadius
+#include "mask/mask_rect.hpp"   // RectShape
 
 // ---- Radial mask geometry on the canvas (document pixels) ----
 struct MaskGeom {

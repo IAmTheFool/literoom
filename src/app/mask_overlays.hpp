@@ -1,9 +1,36 @@
 // app/mask_overlays.hpp: brush, luminosity and combined mask overlays
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::min, std::max, std::clamp
+#include <cmath>     // std::lround
+#include <cstddef>   // size_t
+#include <cstdint>   // uint8_t
+#include <memory>    // std::shared_ptr, std::weak_ptr, std::make_shared
+#include <utility>   // std::move
+#include <variant>   // std::holds_alternative, std::get
+#include <vector>    // std::vector
+
+#include "liteui.hpp"             // CanvasImage, CanvasContext, Color
+
+#include "app/constants.hpp"      // kMaskHandlePx, kColorWhite, kBrushTintEdge,
+                                  // kLumTintEdge, kCompTintEdge
+#include "app/editor_state.hpp"   // inline EditorState state, MaskUi
+#include "app/mask_brush.hpp"     // paintRadialTint, paintRadialOutline,
+                                  // paintLinearTint, paintLinearOutline,
+                                  // paintRectOutline, paintPolygonOutline
+#include "app/masks.hpp"          // selMask, selPart, selectedPart, selectedIsBrush,
+                                  // maskTint, shapeInView, radialInView,
+                                  // linearInView, brushInView, rectInView,
+                                  // polygonInView
+#include "core/geometry.hpp"      // GeoFrame
+#include "edit/render_params.hpp" // RenderParams, buildMaskPasses
+#include "mask/mask.hpp"          // Mask, MaskSet, MaskPart, MaskPassPart,
+                                  // MaskComposite, prepareComposite,
+                                  // maskTypeUsesPixels, maskShapeToSource
+#include "mask/mask_brush.hpp"    // BrushShape, BrushEval, BrushPt
+#include "mask/mask_object.hpp"   // ObjectShape, ObjectPrompt
+#include "mask/mask_range.hpp"    // LuminosityShape, LuminosityEval, ColorRangeShape
+#include "render/render_core.hpp" // renderWith
 
 // ---- Brush overlay ----
 // The red coverage bitmap: the brush rasterized at a small size through the

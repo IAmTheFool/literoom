@@ -1,9 +1,25 @@
 // app/mask_curve.hpp: mask tone curve editor (canvas side)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::clamp
+#include <cstddef>   // size_t
+#include <cstdint>   // uint8_t, uint64_t
+
+#include "liteui.hpp"             // View, Size, Cursor, CanvasContext, Color
+
+#include "app/constants.hpp"      // kCurvePadPx, kCurveHitPx, kCurvePointPx,
+                                  // kColorWhite, kColorDividerHover
+#include "app/curve_editor.hpp"   // curveChannelColor
+#include "app/editor_state.hpp"   // inline EditorState state
+#include "app/mask_effects.hpp"   // kMaskCurveSizePx, kMaskCtlCurve
+#include "app/masks.hpp"          // selMask, selectedMask, maskEdit
+#include "app/render_update.hpp"  // enterDrag
+#include "app/ui_state.hpp"       // uiState
+#include "app/widgets.hpp"        // bindDrag
+#include "color/curves.hpp"       // CurvePoint, CurvePoints, CurveChannel, kCurveChannelCount,
+                                  // kCurveMaxPoints, curveInsert, curveMovePoint,
+                                  // curveRemove, curveToLut, identityCurve
+#include "mask/mask.hpp"          // Mask (.curves)
 
 // ---- Mask tone curve editor (canvas side) ----
 // Same behavior as the Curve pane (click = add point, drag = move,

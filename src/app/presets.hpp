@@ -1,9 +1,19 @@
 // app/presets.hpp: presets and Copy / Paste Settings
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::min
+#include <cstddef>   // size_t
+#include <string>    // std::string
+#include <utility>   // std::move
+
+#include "app/constants.hpp"     // kPresetRows
+#include "app/editor_state.hpp"  // inline EditorState state, setStatus
+#include "app/saved_edits.hpp"   // pictureLabel
+#include "app/ui_state.hpp"      // uiState, PresetEntry
+#include "io/file_utils.hpp"     // baseName
+#include "io/preset.hpp"         // Preset, kPresetNameMax, presetDir, listPresetFiles,
+                                 // loadPresetFile, savePresetFile, deletePresetFile,
+                                 // sanitizePresetName
 
 // ---------------- Presets ----------------
 // A preset is a saved look (sliders, curves, Color Mixer, Color Grading; see

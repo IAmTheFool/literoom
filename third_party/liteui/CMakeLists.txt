@@ -4,11 +4,6 @@ add_library(liteui::liteui ALIAS liteui)
 target_include_directories(liteui INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(liteui INTERFACE cxx_std_23)
 
-option(LITEUI_PROFILE "Print per-second frame timing to stderr" OFF)
-if(LITEUI_PROFILE)
-    target_compile_definitions(liteui INTERFACE LITEUI_PROFILE)
-endif()
-
 option(LITEUI_CANVAS_GL "Use the OpenGL ES 3.0 Canvas backend (Linux)" ON)
 if(LITEUI_CANVAS_GL AND NOT WIN32)
     target_compile_definitions(liteui INTERFACE LITEUI_CANVAS_GL)

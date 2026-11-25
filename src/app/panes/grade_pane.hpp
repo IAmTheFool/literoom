@@ -1,9 +1,24 @@
 // app/panes/grade_pane.hpp: the Color Grade pane (buildGradePane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cmath>      // std::lround, std::round
+#include <cstdio>     // std::snprintf
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Justify, Align,
+                      // FontWeight, Display, Color
+
+#include "app/color_ui.hpp"  // buildGradeThreeWay, buildGradeSingle, gradeEdit,
+                             // gradeRangeName, resetColorGrade, kGradeTabW
+#include "app/constants.hpp" // kColorGradingActivity, kColorActivityHover,
+                             // kColorDropdownRowHover, kColorActivityBarBg,
+    // kColorDividerHover, kColorTextDark, kColorTextMid
+#include "app/editor_state.hpp"  // inline EditorState state
+#include "app/ui_state.hpp"      // uiState (.grade)
+#include "app/widgets.hpp"       // SliderSpec, buildSliderRow, sidebarButton
+#include "color/color_grade.hpp" // GradeWheel, ColorGrade
 
 // -- "Color Grade" pane: 3-way / single-range color wheels (Shadows,
 // Midtones, Highlights, Global) plus shared Blending and Balance sliders.
@@ -12,8 +27,10 @@ inline View buildGradePane() {
   gradePane.style.width = Size::full();
   gradePane.style.direction = FlexDirection::Column;
   gradePane.style.gap = 10.0f;
-  gradePane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == kColorGradingActivity ? Display::Flex : Display::None; });
+  gradePane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kColorGradingActivity ? Display::Flex
+                                                         : Display::None;
+  });
 
   // Mode tabs: 3-Way | Shadows | Mid | High | Global. A bullet marks a range
   // that has been adjusted.
@@ -31,10 +48,11 @@ inline View buildGradePane() {
     tab.style.alignItems = Align::Center;
     tab.style.hoverColor = kColorActivityHover;
     tab.style.backgroundColor = std::function<Color()>([m]() -> Color {
-      return uiState.grade.mode == m ? kColorDropdownRowHover : kColorActivityBarBg;
+      return uiState.grade.mode == m ? kColorDropdownRowHover
+                                     : kColorActivityBarBg;
     });
-    tab.style.borderWidth =
-        std::function<float()>([m] { return uiState.grade.mode == m ? 1.0f : 0.0f; });
+    tab.style.borderWidth = std::function<float()>(
+        [m] { return uiState.grade.mode == m ? 1.0f : 0.0f; });
     tab.style.borderColor = kColorDividerHover;
     tab.onClick = [m] {
       uiState.grade.mode = m;
@@ -62,7 +80,8 @@ inline View buildGradePane() {
   // H:13 S:72 L:+1 for the wheel touched last
   Text gradeReadout;
   gradeReadout.label = std::function<std::string()>([]() -> std::string {
-    const int r = uiState.grade.mode > 0 ? uiState.grade.mode - 1 : uiState.grade.active;
+    const int r =
+        uiState.grade.mode > 0 ? uiState.grade.mode - 1 : uiState.grade.active;
     const GradeWheel &w = state.adjust.grade().wheel[r];
     char buf[64];
     std::snprintf(buf, sizeof buf, "%s   H:%d S:%d L:%+d", gradeRangeName(r),
@@ -77,8 +96,9 @@ inline View buildGradePane() {
 
   // One body per mode; only the selected one is displayed.
   auto modeBody = [](int m, View body) {
-    body.style.display = std::function<Display()>(
-        [m] { return uiState.grade.mode == m ? Display::Flex : Display::None; });
+    body.style.display = std::function<Display()>([m] {
+      return uiState.grade.mode == m ? Display::Flex : Display::None;
+    });
     return body;
   };
   gradePane.addChild(modeBody(0, buildGradeThreeWay()));

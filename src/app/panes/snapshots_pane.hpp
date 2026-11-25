@@ -1,9 +1,22 @@
 // app/panes/snapshots_pane.hpp: the Snapshots pane (buildSnapshotsPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, TextInput, Size, FlexDirection, Display,
+                      // EdgeInsets, Color
+
+#include "app/constants.hpp"    // kSnapshotsActivity, kColor*
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/mask_widgets.hpp" // buildSnapshotRow
+#include "app/snapshots.hpp"    // addSnapshot, deleteSelectedSnapshot,
+                                // filterSnapshotNameField
+#include "app/ui_state.hpp"     // uiState (.names, .snapshots)
+#include "app/widgets.hpp"      // sidebarButton, registerTextField
+#include "io/sidecar.hpp"       // kMaxSnapshots
 
 // -- "Snapshots" pane: named copies of every edit on this picture. Click one
 // to restore it (one undo step); type a name and Save to keep the current
@@ -78,7 +91,8 @@ inline View buildSnapshotsPane() {
   snapshotsPane.addChild(sidebarButton(
       "Delete selected snapshot", deleteSelectedSnapshot, {}, false, [] {
         return uiState.snapshots.sel >= 0 &&
-               static_cast<size_t>(uiState.snapshots.sel) < state.snapshots.size();
+               static_cast<size_t>(uiState.snapshots.sel) <
+                   state.snapshots.size();
       }));
 
   return snapshotsPane;

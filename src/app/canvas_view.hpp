@@ -1,10 +1,13 @@
 // app/canvas_view.hpp: where the picture sits inside the canvas: zoom, scroll, scrollbars
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+
 #pragma once
 
+#include <algorithm> // std::max, std::clamp
+#include <cmath>     // std::round
+
+#include "liteui.hpp"               // CanvasContext, kScrollbarThickness
+#include "app/constants.hpp"        // kColorTrack, kColorScrollThumb
+#include "app/editor_state.hpp"     // EditorState, inline EditorState state, applyZoomDev
 // ---- The canvas view: where the picture sits inside the canvas ----
 // The picture is state.docWidth() x docHeight() image pixels shown at
 // state.zoom logical units per pixel, with kViewPad of margin all round. If it

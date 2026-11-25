@@ -1,23 +1,17 @@
 // app/sync.hpp: Sync Settings: the UI-thread glue
-//
-// Image > Sync Settings to Selected copies the open picture's look onto the
-// pictures picked in the filmstrip; the same worker also does the batch rating.
-// The job (SyncJob, SyncOutcome, syncOne, runSyncJob) is pure and lives in
-// workers/sync_job.hpp, which also explains how a sync works and how it fails;
-// the worker object is workers().sync (app/workers.hpp). What is left here is
-// what touches `state` and the status bar.
-//
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
-// True (with a status message) while a sync is running.
-inline bool syncBusy() {
-  if (!workers().sync.outstanding())
-    return false;
-  setStatus("Wait for the sync to finish", true);
-  return true;
-}
+#include <cstddef> // size_t
+#include <string>  // std::string, std::to_string
+#include <utility> // std::move
+
+#include "app/editor_state.hpp" // inline EditorState state, FilmStrip, setStatus
+#include "app/filmstrip.hpp"    // filmApplyMeta, filmMarkEdited, filmViewPos
+#include "app/saved_edits.hpp"  // pictureLabel
+#include "app/sync_busy.hpp"    // syncBusy (new, see below)
+#include "app/workers.hpp"      // workers()
+#include "workers/sync_job.hpp" // SyncJob, SyncOutcome
+
 
 // Polled once per frame from flushPendingAdjust.
 inline void collectSyncJob() {

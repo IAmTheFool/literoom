@@ -1,12 +1,28 @@
 // app/render_update.hpp: handing the render worker's result back, drag preview,
 // image refresh
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
-#include "workers/latest_worker.hpp"
+#include <exception> // std::exception, std::rethrow_exception
+#include <memory>    // std::shared_ptr
+#include <stdexcept> // std::logic_error, std::runtime_error
+#include <string>    // std::string
+#include <utility>   // std::move
+
+#include "app/editor_state.hpp"      // inline EditorState state, setStatus, clearStatus
+#include "app/workers.hpp"           // workers()
+#include "core/raster_ops.hpp"       // isLargeImage
+#include "render/render.hpp"         // renderAdjusted
+#include "render/render_core.hpp"    // renderToDisplay
+#include "workers/latest_worker.hpp" // LatestWorker
+#include "workers/render_job.hpp"    // RenderJob, RenderWorker
+
+// Defined later in the include order (app/geometry_worker.hpp, app/crop.hpp),
+// which themselves depend on this header, so they are declared here, not
+// included.
+inline bool geometryDirty();           // app/geometry_worker.hpp
+inline void submitGeometryJob();       // app/geometry_worker.hpp
+inline void syncSource(bool force);    // app/crop.hpp
+inline void updatePreviewFromAdjustments(); // defined below
 
 // ---- Handing the worker's result back to the UI thread ----
 // The event loop sleeps until the OS hands it an event, and a worker finishing

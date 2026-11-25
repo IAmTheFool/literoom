@@ -1,9 +1,26 @@
 // app/panes/curve_pane.hpp: the Curve pane (buildCurvePane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cmath>      // std::lround
+#include <cstdint>    // uint32_t
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Justify, Align,
+                      // Cursor, CanvasContext, FontWeight, Color
+
+#include "app/auto_tone_hist.hpp" // refreshHistogramIfStale
+#include "app/constants.hpp"      // kCurveActivity, kCurveSizePx, kCurveTabW,
+                                  // kNeverSeenActivity, kColor*
+#include "app/curve_editor.hpp"   // paintCurve, setCurveChannel, curvePress,
+                                  // curveDrag, curveEnd, curveRightPress,
+                                  // curveActiveCurve, curveChannelName,
+                                  // resetCurve, resetAllCurves
+#include "app/editor_state.hpp"   // inline EditorState state
+#include "app/ui_state.hpp"       // uiState (.curve)
+#include "app/widgets.hpp"        // bindDrag, sidebarButton
+#include "color/curves.hpp" // CurveChannel, kCurveChannelCount, identityCurve
 
 // -- "Curve" pane: tone curves — RGB (master) plus per-channel R, G, B, one
 // tab each. Click the plot to add a point, drag to move it, right-click a

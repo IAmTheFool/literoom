@@ -1,10 +1,22 @@
 // app/panes/presets_pane.hpp: the Presets pane (buildPresetsPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
 
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, TextInput, Size, FlexDirection, Display,
+                      // EdgeInsets, Color
+
+#include "app/constants.hpp"    // kPresetsActivity, kPresetRows, kColor*
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/mask_widgets.hpp" // buildPresetRow
+#include "app/presets.hpp"      // refreshPresets, filterPresetNameField,
+                                // saveCurrentPreset, deleteSelectedPreset
+#include "app/ui_state.hpp"     // uiState (.names, .presets)
+#include "app/widgets.hpp"      // sidebarButton, registerTextField
+#include "io/preset.hpp"        // presetDir
 // -- "Presets" pane: saved looks. Click one to apply it (one undo step);
 // type a name and Save to store the current look. The list is re-read from
 // disk each time the pane is opened.
@@ -66,8 +78,9 @@ inline View buildPresetsPane() {
   presetsEmpty.fontSize = 12.0f;
   presetsEmpty.color = kColorTextMuted;
   presetsEmpty.style.margin = EdgeInsets{6, 0, 0, 0};
-  presetsEmpty.style.display = std::function<Display()>(
-      [] { return uiState.presets.list.empty() ? Display::Flex : Display::None; });
+  presetsEmpty.style.display = std::function<Display()>([] {
+    return uiState.presets.list.empty() ? Display::Flex : Display::None;
+  });
   presetsPane.addChild(std::move(presetsEmpty));
 
   for (size_t i = 0; i < kPresetRows; ++i)
@@ -76,7 +89,8 @@ inline View buildPresetsPane() {
   presetsPane.addChild(sidebarButton(
       "Delete selected preset", deleteSelectedPreset, {}, false, [] {
         return uiState.presets.sel >= 0 &&
-               static_cast<size_t>(uiState.presets.sel) < uiState.presets.list.size();
+               static_cast<size_t>(uiState.presets.sel) <
+                   uiState.presets.list.size();
       }));
 
   Text presetsFolder;

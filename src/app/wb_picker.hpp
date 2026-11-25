@@ -1,9 +1,19 @@
 // app/wb_picker.hpp: white-balance picker
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::clamp, std::min, std::max
+#include <cmath>     // std::lround
+#include <cstddef>   // size_t
+#include <cstdint>   // uint8_t
+#include <string>    // std::string, std::to_string
+
+#include "liteui.hpp" // CanvasImage
+
+#include "app/constants.hpp" // kAdjustActivity
+#include "app/editor_state.hpp" // inline EditorState state, CompareMode, setStatus,
+                                // clearStatus
+#include "app/geometry_worker.hpp" // geometryBusy
+#include "color/color_pass.hpp"    // solveWhiteBalance, WbPick, WbPickStatus
 
 // ---------------- White-balance picker ----------------
 // Armed from the Adjust pane's button or the W key. Its math is
@@ -135,4 +145,3 @@ inline bool wbPress(float lx, float ly) {
             false);
   return true;
 }
-

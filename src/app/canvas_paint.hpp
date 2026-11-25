@@ -1,9 +1,19 @@
 // app/canvas_paint.hpp: clipping overlay, GPU copies of the picture, paintCanvas
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <memory>   // shared_ptr, make_shared
+
+#include "liteui.hpp"            // CanvasContext, CanvasImage, CanvasTexture
+
+#include "app/constants.hpp"     // kColor* palette
+#include "app/editor_state.hpp"  // state, CompareMode
+
+#include "app/canvas_view.hpp"   // ViewGeo, viewGeo, viewOrigin, paintViewBars
+#include "app/compare.hpp"       // paintCompareOverlay
+#include "app/crop.hpp"          // cropToolActive
+#include "app/crop_overlay.hpp"  // paintCropOverlay
+#include "app/masks.hpp"         // maskToolActive
+#include "app/mask_overlays.hpp" // paintMaskOverlay
 
 // Red/blue clipping warning over the edited picture. The overlay image is
 // in document space (stretched to docW x docH like the preview), so it
@@ -70,7 +80,6 @@ previewTexture(const std::shared_ptr<CanvasImage> &img) {
 }
 
 inline void paintCanvas(CanvasContext &ctx) {
-  LITEUI_PROF_START(profAppPaint);
   if (!state.image || state.image->width <= 0 || state.image->height <= 0) {
     gImageTex = PictureTex{}; // no picture: let go of the GPU copies
     gSourceTex = PictureTex{};
@@ -169,5 +178,4 @@ inline void paintCanvas(CanvasContext &ctx) {
   ctx.rect(ox - hair / 2, oy - hair / 2, vg.W + hair, vg.H + hair);
   ctx.stroke();
   paintViewBars(ctx, vg);
-  LITEUI_PROF_ADD(appPaint, profAppPaint);
 }

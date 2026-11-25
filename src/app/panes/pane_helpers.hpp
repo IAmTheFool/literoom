@@ -1,9 +1,11 @@
 // app/panes/pane_helpers.hpp: small views shared by several panes
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <string> // std::string
+
+#include "liteui.hpp"        // Text
+
+#include "app/constants.hpp" // kColorTextMuted
 
 // A small muted heading above a group of controls (Adjust sections, mask
 // shape sections).

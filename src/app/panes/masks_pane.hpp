@@ -1,9 +1,60 @@
-// app/panes/masks_pane.hpp: the Masks pane and its right-hand editor (buildMaskPanes)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
+// app/panes/masks_pane.hpp: the Masks pane and its right-hand editor
+// (buildMaskPanes)
 #pragma once
+
+#include <algorithm>  // std::clamp
+#include <cmath>      // std::lround
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+#include <variant>    // std::get_if
+
+#include "liteui.hpp" // View, Text, TextInput, Size, FlexDirection,
+                      // Justify, Align, Display, EdgeInsets, FontWeight,
+                      // Color
+
+#include "app/constants.hpp"    // kMasksActivity, kMaskTrackW, kColor*
+#include "app/curve_editor.hpp" // curveChannelName
+#include "app/editor_state.hpp" // inline EditorState state, MaskUi
+#include "app/history_panel.hpp" // buildPartRow, maskShapeSlider, maskRadialSlider,
+                                 // maskLinearSlider, buildMaskAdjustmentSlider
+#include "app/mask_curve.hpp"   // maskCurveCopy, buildMaskCurveCanvas
+#include "app/mask_effects.hpp" // buildMaskAmountSlider, buildMaskMixSlider,
+                                // buildMaskGradeSlider, buildMaskGradeShared
+#include "app/mask_list.hpp" // addPart, duplicateSelectedMask, moveSelectedMask,
+                             // copyMaskEffects, pasteMaskEffects, setPartOp,
+                             // removeSelectedPart
+#include "app/mask_widgets.hpp" // buildMaskRow
+#include "app/masks.hpp"        // selMask, selPart, selectedMask, selectedPart,
+                                // selectedPartType, selectedIsBrush, tintFlag,
+    // maskChipW, setMaskTintColor, kMaskTintPalette,
+    // kMaskTintCount, syncMaskNameField,
+    // renameSelectedMask, maskEditDiscrete,
+    // editShapeInView, kMaskCtl*
+#include "app/panes/pane_helpers.hpp" // sectionLabel
+#include "app/ui_state.hpp"           // uiState (.names, .maskPane)
+#include "app/virtual_copies.hpp" // addMask, deleteSelectedMask, makeTestObjectMap,
+                                  // setSelectedObjectMap, clearSelectedObject
+#include "app/widgets.hpp"        // SliderSpec, buildSliderRow, sidebarButton,
+                                  // registerTextField
+#include "app/workers.hpp"        // getSegInfo
+#include "color/color_grade.hpp" // GradeWheel, ColorGrade, kGradeRangeCount
+#include "color/color_mix.hpp"   // MixChan, kMixChanCount, kMixBandCount,
+                                 // mixAnyNonZero, mixChanAnyNonZero
+#include "color/curves.hpp" // CurvePoints, CurveChannel, kCurveChannelCount,
+                            // identityCurve, identityCurves
+#include "core/adjustments.hpp" // AdjustmentSpec, kAdjustmentSpecs, AdjId
+#include "core/geometry.hpp"    // GeoFrame
+#include "mask/mask.hpp"        // Mask, MaskPart, MaskType, MaskOp, maskOpName,
+                                // kMaxMasks, kMaxMaskParts
+#include "mask/mask_brush.hpp"  // BrushShape, kBrushMinSize, kBrushMaxSize
+#include "mask/mask_geom.hpp"   // RadialShape, LinearShape, kMaskMinRadius,
+                                // kMaskMaxRadius
+#include "mask/mask_object.hpp" // ObjectShape
+#include "mask/mask_polygon.hpp" // PolygonShape
+#include "mask/mask_range.hpp"   // LuminosityShape, ColorRangeShape
+#include "mask/mask_rect.hpp"    // RectShape
 
 // The Masks pane (goes in the sidebar) and the editor for the selected mask
 // (goes in the right-hand panel, built later: see addMaskPanel).
@@ -21,8 +72,10 @@ inline MaskPaneViews buildMaskPanes() {
   maskPane.style.width = Size::full();
   maskPane.style.direction = FlexDirection::Column;
   maskPane.style.gap = 6.0f;
-  maskPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == kMasksActivity ? Display::Flex : Display::None; });
+  maskPane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kMasksActivity ? Display::Flex
+                                                  : Display::None;
+  });
 
   Text maskHint;
   maskHint.label = std::function<std::string()>([]() -> std::string {
@@ -719,11 +772,11 @@ inline MaskPaneViews buildMaskPanes() {
       if (uiState.maskPane.curveActive >= 0 &&
           uiState.maskPane.curveActive < static_cast<int>(p.size()))
         return name + ": In " +
-               std::to_string(static_cast<int>(
-                   std::lround(p[static_cast<size_t>(uiState.maskPane.curveActive)].x))) +
+               std::to_string(static_cast<int>(std::lround(
+                   p[static_cast<size_t>(uiState.maskPane.curveActive)].x))) +
                "  Out " +
-               std::to_string(static_cast<int>(
-                   std::lround(p[static_cast<size_t>(uiState.maskPane.curveActive)].y)));
+               std::to_string(static_cast<int>(std::lround(
+                   p[static_cast<size_t>(uiState.maskPane.curveActive)].y)));
       return name + ": " + std::to_string(p.size()) + " points";
     });
     curveInfo.fontSize = 13.0f;
@@ -741,7 +794,8 @@ inline MaskPaneViews buildMaskPanes() {
       uiState.maskPane.curveActive = -1;
       uiState.maskPane.curveUiDirty = true;
       maskEditDiscrete([](Mask &m) {
-        m.curves[static_cast<size_t>(uiState.maskPane.curveCh)] = identityCurve();
+        m.curves[static_cast<size_t>(uiState.maskPane.curveCh)] =
+            identityCurve();
       });
     }));
     fxCurve.addChild(sidebarButton("Reset All Curves", [] {

@@ -1,9 +1,15 @@
-// app/shell/sidebar_divider.hpp: the draggable divider right of the sidebar (buildSidebarDivider)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
+// app/shell/sidebar_divider.hpp: the draggable divider right of the sidebar
 #pragma once
+
+#include <algorithm>  // std::clamp
+#include <functional> // std::function
+
+#include "liteui.hpp" // View, Size, Cursor
+
+#include "app/constants.hpp"    // kColorDivider, kColorDividerHover, kDividerW,
+                                // kNoActivity, kMinSidebarW, kMaxSidebarW
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/widgets.hpp"      // bindDrag
 
 // ---- Vertical divider — drag to resize the sidebar ----
 inline View buildSidebarDivider() {

@@ -1,9 +1,18 @@
 // app/shell/activity_bar.hpp: the activity bar (buildActivityBar)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <functional> // std::function
+#include <utility>    // std::move
+#include <vector>     // std::vector
+
+#include "liteui.hpp"            // View, Text, Size, Align, Justify, FlexDirection, EdgeInsets,
+                                 // FontWeight, Color
+
+#include "app/color_ui.hpp"      // kGradePaneW
+#include "app/constants.hpp"     // Activity, kActivityBarW, kNoActivity, kColorGradingActivity,
+                                 // kColorActivityBarBg, kColorActivityHover,
+                                 // kColorActivityActive, kColorTextIcon
+#include "app/editor_state.hpp"  // inline EditorState state
 
 // ---- Activity bar ----
 inline View buildActivityBar(const std::vector<Activity> &activities) {

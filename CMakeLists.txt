@@ -223,6 +223,24 @@ if(UNIX AND NOT APPLE)
     include(CPack)   # must come after the install() rules and CPACK_* variables
 endif()
 
+# ---- header_check: every src/**/*.hpp must compile as its own TU ----
+set(_hc_srcs "")
+foreach(_h ${LITEROOM_HEADERS})
+    file(RELATIVE_PATH _rel ${LITEROOM_SRC} ${_h})
+    string(MAKE_C_IDENTIFIER "${_rel}" _id)
+    set(_tu ${CMAKE_BINARY_DIR}/header_check/${_id}.cpp)
+    file(GENERATE OUTPUT ${_tu} CONTENT "#include \"${_rel}\"\n")
+    list(APPEND _hc_srcs ${_tu})
+endforeach()
+
+add_library(header_check OBJECT EXCLUDE_FROM_ALL ${_hc_srcs})
+target_include_directories(header_check PRIVATE ${LITEROOM_SRC})
+target_compile_features(header_check PRIVATE cxx_std_23)
+target_link_libraries(header_check PRIVATE liteui::liteui Threads::Threads)
+if(MSVC)
+    target_compile_options(header_check PRIVATE /utf-8 /bigobj)
+endif()
+
 # ------------------------------------------------------------------------
 # Tests (Catch2 v3)
 # ------------------------------------------------------------------------

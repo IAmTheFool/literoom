@@ -1,9 +1,27 @@
 // app/masks.hpp: masks: selection, editing, overlay color, name field
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm>  // std::clamp, std::max, std::min
+#include <cstddef>    // size_t
+#include <cstdint>    // uint8_t
+#include <functional> // std::function
+#include <optional>   // std::optional, std::nullopt
+#include <string>     // std::string
+#include <variant>    // std::get_if
+
+#include "liteui.hpp"            // Color, TextInputState, kScrollbarThickness
+
+#include "app/constants.hpp"     // kMasksActivity, kMaskPanelPad
+#include "app/editor_state.hpp"  // inline EditorState state
+#include "app/render_update.hpp" // updateImageFromAdjustments
+#include "app/ui_state.hpp"      // uiState (.names, dropMaskCurveSelection)
+#include "core/geometry.hpp"     // GeoFrame
+#include "mask/mask.hpp"         // Mask, MaskSet, MaskPart, MaskType,
+                                 // kMaxMaskParts, sanitizeMaskName
+#include "mask/mask_brush.hpp"   // BrushShape
+#include "mask/mask_geom.hpp"    // RadialShape, LinearShape
+#include "mask/mask_polygon.hpp" // PolygonShape
+#include "mask/mask_rect.hpp"    // RectShape
 
 // ---------------- Masks: selection, editing, overlay ----------------
 // The Masks pane (activity 7) edits `state.adjust.masks()`. Sliders go through

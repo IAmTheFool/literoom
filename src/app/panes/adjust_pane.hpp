@@ -1,6 +1,24 @@
 // app/panes/adjust_pane.hpp: the Adjust pane (buildAdjustPane)
 #pragma once
 
+#include <array>      // std::array
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Justify, Align,
+                      // TextWrap, Display, Color
+
+#include "app/auto_tone_hist.hpp" // autoTone
+#include "app/constants.hpp"      // kAdjustActivity, kColorActivityHover,
+                                  // kColorActivityActive, kColorTransparent,
+                                  // kColorTextDark, kColorTextMuted
+#include "app/editor_state.hpp"   // inline EditorState state
+#include "app/wb_picker.hpp"      // toggleWbPicker, wbPickerActive
+#include "app/widgets.hpp"        // sidebarButton, buildAdjustmentSlider
+#include "core/adjustments.hpp"   // AdjustmentSpec, kAdjustmentSpecs, AdjId
+
 // Tabs of the Adjust pane.
 enum class AdjustTab : int { Tone, Color, Filters, Detail, Effects, Count };
 
@@ -48,9 +66,8 @@ inline View buildAdjustTabBar() {
     t.label = std::string(kAdjustTabNames[i]);
     t.fontSize = 11.0f;
     t.wrap = TextWrap::NoWrap;
-    t.color = std::function<Color()>([tab] {
-      return gAdjustTab == tab ? kColorTextDark : kColorTextMuted;
-    });
+    t.color = std::function<Color()>(
+        [tab] { return gAdjustTab == tab ? kColorTextDark : kColorTextMuted; });
     btn.addChild(std::move(t));
 
     bar.addChild(std::move(btn));
@@ -80,17 +97,17 @@ inline View buildAdjustPane() {
     pages[i].style.width = Size::full();
     pages[i].style.direction = FlexDirection::Column;
     pages[i].style.gap = 16.0f;
-    pages[i].style.display = std::function<Display()>([tab] {
-      return gAdjustTab == tab ? Display::Flex : Display::None;
-    });
+    pages[i].style.display = std::function<Display()>(
+        [tab] { return gAdjustTab == tab ? Display::Flex : Display::None; });
   }
   auto page = [&](AdjustTab t) -> View & {
     return pages[static_cast<size_t>(t)];
   };
 
-  page(AdjustTab::Tone).addChild(sidebarButton(
-      "Auto Tone (A)", [] { autoTone(); }, {}, false,
-      [] { return state.source != nullptr && !state.dragging; }));
+  page(AdjustTab::Tone)
+      .addChild(sidebarButton(
+          "Auto Tone (A)", [] { autoTone(); }, {}, false,
+          [] { return state.source != nullptr && !state.dragging; }));
 
   bool pastGreyscale = false;
   for (const auto &spec : kAdjustmentSpecs) {
@@ -102,7 +119,8 @@ inline View buildAdjustPane() {
 
     View &dst = page(adjustTabFor(spec, pastGreyscale));
 
-    // The white-balance picker sits above Temperature, the first slider it sets.
+    // The white-balance picker sits above Temperature, the first slider it
+    // sets.
     if (spec.id == AdjId::Temperature)
       dst.addChild(sidebarButton(
           "Pick White Balance (W)", [] { toggleWbPicker(); },

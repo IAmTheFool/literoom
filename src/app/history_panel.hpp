@@ -1,10 +1,29 @@
 // app/history_panel.hpp: the History panel
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
+#include <cmath>      // std::lround, std::round
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <optional>   // std::nullopt
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, Align, EdgeInsets, Overflow,
+                      // TextWrap, Display, Color
+
+#include "app/constants.hpp" // kHistoryActivity, kMaskTrackW, kColorActivityHover,
+                             // kColorDropdownRowHover, kColorActivityBarBg,
+    // kColorDividerHover, kColorTextMuted, kColorTextDark
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/masks.hpp" // selectedMask, selectedPart, selMask, selPart, maskEdit,
+                         // shapeInView, editShapeInView, kMaskCtlAdj
+#include "app/render_update.hpp" // updateImageFromAdjustments
+#include "app/ui_state.hpp"      // inline UiState uiState
+#include "app/widgets.hpp"       // SliderSpec, buildSliderRow
+#include "core/adjustments.hpp"  // AdjustmentSpec, AdjId
+#include "core/geometry.hpp"     // GeoFrame
+#include "mask/mask.hpp"         // Mask, MaskPart, maskOpName, maskTypeName
+#include "mask/mask_geom.hpp"    // RadialShape, LinearShape
 // ---------------- History panel ----------------
 // Row r shows step (n - 1 - r): newest at the top, the untouched picture at
 // the bottom. There are kMaxUndoSteps + 1 rows, shown only for steps that

@@ -1,9 +1,18 @@
 // app/shell/status_bar.hpp: the status bar (buildStatusBar)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, EdgeInsets, Align, Justify,
+                      // FlexDirection, TextWrap, Color
+
+#include "app/canvas_view.hpp" // setZoom
+#include "app/constants.hpp"   // kStatusBarH, kZoomStep, kColorStatusBarBg,
+    // kColorStatusHover, kColorStatusError, kColorWhite
+#include "app/editor_state.hpp" // inline EditorState state, CompareMode
+#include "app/saved_edits.hpp"  // pictureLabel
 
 // Status bar: image info on the left, zoom controls on the right.
 inline View buildStatusBar() {
@@ -101,7 +110,8 @@ inline View buildStatusBar() {
 
   Text zoomLabel;
   zoomLabel.label = [] {
-    return std::to_string(static_cast<int>(state.zoomDev * 100.0f + 0.5f)) + "%";
+    return std::to_string(static_cast<int>(state.zoomDev * 100.0f + 0.5f)) +
+           "%";
   };
   zoomLabel.fontSize = 12.0f;
   zoomLabel.color = kColorWhite;

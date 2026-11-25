@@ -1,10 +1,17 @@
 // app/snapshots.hpp: named snapshots
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
+#include <algorithm> // std::min
+#include <cstddef>   // size_t
+#include <string>    // std::string, std::to_string
+#include <utility>   // std::move
+
+#include "app/editor_state.hpp"  // inline EditorState state, setStatus
+#include "app/render_update.hpp" // updateImageFromAdjustments
+#include "app/ui_state.hpp"      // uiState
+#include "io/sidecar.hpp"        // NamedSnapshot, SnapshotList, kMaxSnapshots,
+                                 // kSnapshotNameMax, kSnapshotsMaxBytes,
+                                 // sanitizeSnapshotName, sidecarSnapshotsToJson
 // ---------------- Snapshots ----------------
 // A snapshot is a named, complete copy of the picture's edits (sliders, curves,
 // Color Mix, Color Grading, crop, rotation, straighten AND masks; see
@@ -36,7 +43,8 @@ inline void filterSnapshotNameField(const std::string &typed) {
       s.push_back(c);
   if (uiState.names.snapshot && uiState.names.snapshot->text != s) {
     uiState.names.snapshot->text = s;
-    uiState.names.snapshot->cursor = std::min(uiState.names.snapshot->cursor, s.size());
+    uiState.names.snapshot->cursor =
+        std::min(uiState.names.snapshot->cursor, s.size());
     uiState.names.snapshot->dirty = true;
   }
 }
@@ -52,8 +60,8 @@ inline void addSnapshot() {
               true);
     return;
   }
-  std::string name = sanitizeSnapshotName(uiState.names.snapshot ? uiState.names.snapshot->text
-                                                         : std::string());
+  std::string name = sanitizeSnapshotName(
+      uiState.names.snapshot ? uiState.names.snapshot->text : std::string());
   if (name.empty())
     name = nextSnapshotName();
   NamedSnapshot s;
@@ -100,13 +108,14 @@ inline void applySnapshotEntry(size_t i) {
 }
 
 inline void deleteSelectedSnapshot() {
-  if (uiState.snapshots.sel < 0 || static_cast<size_t>(uiState.snapshots.sel) >= state.snapshots.size())
+  if (uiState.snapshots.sel < 0 ||
+      static_cast<size_t>(uiState.snapshots.sel) >= state.snapshots.size())
     return;
-  const std::string name = state.snapshots[static_cast<size_t>(uiState.snapshots.sel)].name;
+  const std::string name =
+      state.snapshots[static_cast<size_t>(uiState.snapshots.sel)].name;
   state.snapshots.erase(state.snapshots.begin() + uiState.snapshots.sel);
   uiState.snapshots.sel = -1;
   state.snapshotsDirty = true;
   state.markDirty();
   setStatus("Deleted snapshot: " + name, false);
 }
-

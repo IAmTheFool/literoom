@@ -1,9 +1,12 @@
 // app/startup_checks.hpp: verifyAdjustmentSpecs (runs once at startup)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <cstddef> // size_t
+#include <cstdio>  // std::fprintf, stderr
+#include <cstdlib> // std::abort
+#include <string>  // std::string
+
+#include "core/adjustments.hpp" // AdjustmentSpec, AdjId, kAdjustmentSpecs
 
 // The pipeline indexes kAdjustmentSpecs by AdjId (the tone tables, the
 // sidebar loop, the color pass), so entry i must describe AdjId i. This can't
@@ -29,4 +32,3 @@ inline void verifyAdjustmentSpecs() {
     }
   }
 }
-

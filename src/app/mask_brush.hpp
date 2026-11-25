@@ -1,9 +1,39 @@
-// app/mask_brush.hpp: brush painting
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+// app/mask_brush.hpp: brush painting, mask press / drag, mask overlay painting
 #pragma once
+
+#include <algorithm> // std::min, std::max, std::clamp
+#include <array>     // std::array
+#include <cmath>     // std::hypot, std::fabs, std::atan2, std::lround
+#include <cstddef>   // size_t
+#include <cstdint>   // uint8_t
+#include <memory>    // std::shared_ptr
+#include <optional>  // std::optional, std::nullopt
+#include <string>    // std::to_string
+#include <utility>   // std::move
+#include <variant>   // std::get_if, std::holds_alternative
+#include <vector>    // std::vector
+
+#include "liteui.hpp" // CanvasContext, CanvasImage, CanvasGradient, Color
+
+#include "app/constants.hpp"    // kMaskHitPx, kMaskHandlePx, kColorWhite
+#include "app/editor_state.hpp" // inline EditorState state, MaskUi
+#include "app/mask_polygon.hpp" // polygonBegin, polygonDragTo, polygonBodyHit, polyDocPts
+#include "app/mask_shapes.hpp" // MaskGeom, LinGeom, radialGeom, rectGeom, linearGeom,
+                               // maskHit, linearHit, rectHit, kMaskHit*
+#include "app/masks.hpp" // brushInView, radialInView, linearInView, rectInView,
+    // polygonInView, edit*InView, maskToolActive, maskTintColor
+#include "app/render_update.hpp"  // enterDrag
+#include "app/virtual_copies.hpp" // objectPress
+#include "core/geometry.hpp"      // GeoFrame
+#include "edit/render_params.hpp" // RenderParams, buildMaskPasses
+#include "mask/mask.hpp"          // Mask, MaskSet, MaskPart
+#include "mask/mask_brush.hpp" // BrushShape, BrushPt, BrushStroke, kBrushMax*, kBrushPointGap
+#include "mask/mask_geom.hpp" // RadialShape, LinearShape, kMaskMinRadius, kMaskMaxRadius
+#include "mask/mask_object.hpp"   // ObjectShape
+#include "mask/mask_polygon.hpp"  // PolygonShape, PolyPt
+#include "mask/mask_range.hpp"    // ColorRangeShape
+#include "mask/mask_rect.hpp"     // RectShape
+#include "render/render_core.hpp" // renderWith
 
 // ---- Brush painting ----
 // With a brush part selected, every press on the image starts a stroke and the
@@ -105,8 +135,9 @@ inline void brushDragTo(float px, float py) {
   state.markDirty(); // the cursor ring follows the pointer
 }
 
-inline std::shared_ptr<CanvasImage>
-lumTintBase(); // defined with the luminosity overlay below
+// Defined in app/mask_overlays.hpp. That header includes this one, so the
+// function is declared here instead of including it (which would be a cycle).
+inline std::shared_ptr<CanvasImage> lumTintBase();
 
 // Color of the picture at (fx, fy) (fractions of the picture on screen) as
 // it stands just BEFORE mask `sel`: the same pixels ColorRangeEval sees.
@@ -665,4 +696,3 @@ inline void paintLinearOutline(CanvasContext &ctx, const LinearShape &l,
   ctx.setLineWidth(px * 1.5f);
   ctx.stroke();
 }
-

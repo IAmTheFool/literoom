@@ -1,9 +1,13 @@
 // app/compare.hpp: Before / After (fence: compare)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm>  // std::clamp
+#include <cmath>      // std::floor
+#include <string>
+
+#include "liteui.hpp"            // CanvasContext, Color, FontWeight, TextAlign, TextBaseline
+#include "app/constants.hpp"     // kColorWhite
+#include "app/editor_state.hpp"  // state, CompareMode
 
 // BEGIN compare
 // ---------------- Before / After ----------------

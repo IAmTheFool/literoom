@@ -1,9 +1,13 @@
 // app/readout.hpp: RGB readout under the cursor
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::clamp
+#include <cstddef>   // size_t
+#include <cstdint>   // uint8_t
+
+#include "liteui.hpp"            // CanvasImage
+
+#include "app/editor_state.hpp"  // inline EditorState state, CompareMode
 
 // ---------------- RGB readout under the cursor ----------------
 // Both return true only when the readout changed, so LiteUI repaints only

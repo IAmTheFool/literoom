@@ -1,9 +1,17 @@
 // app/panes/info_pane.hpp: the Info pane (buildInfoPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Display
+
+#include "app/constants.hpp"    // kInfoActivity, kColorTextMid, kColorTextMuted
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/saved_edits.hpp" // pictureLabel, currentColorTag, currentPhotoInfo
+#include "io/exif.hpp"         // exif::describeCamera, describeExposure,
+                               // describeFocalLength
 
 // -- "Info" pane: real data about the open image.
 inline View buildInfoPane() {
@@ -11,8 +19,10 @@ inline View buildInfoPane() {
   infoPane.style.direction = FlexDirection::Column;
   infoPane.style.width = Size::full();
   infoPane.style.gap = 6.0f;
-  infoPane.style.display = std::function<Display()>(
-      [] { return state.activeActivity == kInfoActivity ? Display::Flex : Display::None; });
+  infoPane.style.display = std::function<Display()>([] {
+    return state.activeActivity == kInfoActivity ? Display::Flex
+                                                 : Display::None;
+  });
 
   Text infoName;
   infoName.label = std::function<std::string()>([] {
@@ -37,7 +47,8 @@ inline View buildInfoPane() {
   Text infoZoom;
   infoZoom.label = std::function<std::string()>([] {
     return "Zoom: " +
-           std::to_string(static_cast<int>(state.zoomDev * 100.0f + 0.5f)) + "%";
+           std::to_string(static_cast<int>(state.zoomDev * 100.0f + 0.5f)) +
+           "%";
   });
   infoZoom.fontSize = 13.0f;
   infoZoom.color = kColorTextMid;

@@ -35,18 +35,6 @@
 #include <variant>
 #include <vector>
 
-// The app layer times a few paint paths with liteui's profiling macros
-// (canvas_paint.hpp, auto_tone_hist.hpp). liteui.hpp defines them only in the
-// translation unit that compiles the implementation, and this unit has none (and
-// never runs any of that code), so they are no-ops here. If liteui ever defines
-// them outside its implementation section, these #ifndefs step aside.
-#ifndef LITEUI_PROF_START
-#define LITEUI_PROF_START(...)
-#endif
-#ifndef LITEUI_PROF_ADD
-#define LITEUI_PROF_ADD(...)
-#endif
-
 #define main literoom_app_main_second_tu
 #include "main.cpp"
 #undef main

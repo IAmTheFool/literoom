@@ -1,9 +1,31 @@
 // app/shell/shortcuts.hpp: keyboard shortcuts (installShortcuts)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <functional> // std::function
+#include <utility>    // std::move
+
+#include "liteui.hpp" // LiteUI, Key, KeyModifiers, KeyEvent
+
+#include "app/auto_tone_hist.hpp" // autoTone, toggleClipping, toggleChannelClipping
+#include "app/canvas_view.hpp"  // setZoom
+#include "app/compare.hpp"      // toggleBefore, toggleSplit
+#include "app/constants.hpp"    // kZoomStep
+#include "app/crop.hpp"         // cropToolActive
+#include "app/crop_tool.hpp"    // applyCrop
+#include "app/editor_state.hpp" // inline EditorState state, clearStatus
+#include "app/export.hpp"       // exportSelected
+#include "app/filmstrip.hpp" // filmSelectAll, filmStep, toggleFilmstrip, openFolder
+#include "app/masks.hpp"     // maskToolActive, typingInTextField
+#include "app/meta_commands.hpp" // openImage, exportImage, toggleSidebar, ratePhoto,
+                                 // flagPhoto, labelPhoto
+#include "app/presets.hpp"       // copySettings, pasteSettings
+#include "app/rotate.hpp"        // undo, redo, applyGeoOp
+#include "app/sync.hpp"          // syncSettings
+#include "app/virtual_copies.hpp" // createVirtualCopy, deleteSelectedMask
+#include "app/wb_picker.hpp"      // toggleWbPicker
+#include "app/widgets.hpp"        // forwardKeyToTextField
+#include "core/geometry.hpp"      // GeoOp
+#include "io/photo_meta.hpp"      // PhotoFlag, kMaxRating
 
 // ---- Keyboard shortcuts ----
 // LiteUI's addShortcut is global: it fires whatever has focus, so these work
@@ -96,8 +118,7 @@ inline void installShortcuts(LiteUI &ui) {
     ui.addShortcut(none, static_cast<Key>(static_cast<int>(Key::N0) + s),
                    notTyping([s] { ratePhoto(s); }));
   ui.addShortcut(none, Key::P, notTyping([] { flagPhoto(PhotoFlag::Pick); }));
-  ui.addShortcut(none, Key::X,
-                 notTyping([] { flagPhoto(PhotoFlag::Reject); }));
+  ui.addShortcut(none, Key::X, notTyping([] { flagPhoto(PhotoFlag::Reject); }));
   ui.addShortcut(none, Key::U, notTyping([] { flagPhoto(PhotoFlag::None); }));
   for (int c = 1; c <= 4; ++c)
     ui.addShortcut(none, static_cast<Key>(static_cast<int>(Key::N0) + 5 + c),

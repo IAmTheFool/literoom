@@ -5,12 +5,18 @@
 // (app/workers.hpp). What is left here reads and writes `state`: deciding
 // whether a rebuild is needed, submitting it, and adopting the finished bundle
 // as one atomic swap.
-//
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
 
-#include "workers/geometry_job.hpp"
+#include <exception> // std::exception, std::rethrow_exception
+#include <stdexcept> // std::logic_error, std::runtime_error
+#include <string>    // std::string
+#include <utility>   // std::move
+
+#include "app/crop.hpp"             // resetCropSelection
+#include "app/editor_state.hpp"     // inline EditorState state, setStatus, clearStatus
+#include "app/saved_edits.hpp"      // announceColorTag
+#include "app/workers.hpp"          // workers()
+#include "workers/geometry_job.hpp" // GeometryJob, GeometryBundle, GeometryWorker
 
 // True when state.adjust's committed orientation/angle/expand/crop hasn't
 // been rendered into state.oriented/rotated/source yet — mirrors syncSource's

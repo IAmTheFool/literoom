@@ -1,9 +1,24 @@
-// app/mask_polygon.hpp: polygon / lasso tool
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+// app/mask_polygon.hpp: polygon / lasso tool (canvas side)
 #pragma once
+
+#include <algorithm>  // std::clamp, std::min, std::max
+#include <cmath>      // std::hypot
+#include <cstddef>    // size_t, std::ptrdiff_t
+#include <functional> // std::function
+#include <string>     // std::to_string
+#include <vector>     // std::vector
+
+#include "app/constants.hpp"     // kMaskHitPx
+#include "app/editor_state.hpp"  // inline EditorState state, MaskUi, setStatus
+#include "app/masks.hpp"         // selMask, selPart, maskToolActive, selectedIsPolygon,
+                                 // maskEdit, maskEditDiscrete, editShapeInView,
+                                 // polygonInView, kMaskCtlPolyVertex,
+                                 // kMaskCtlPolyMove, kMaskCtlPolyLasso
+#include "app/render_update.hpp" // enterDrag
+#include "core/geometry.hpp"     // GeoFrame
+#include "mask/mask.hpp"         // Mask, MaskSet
+#include "mask/mask_polygon.hpp" // PolyPt, PolygonShape, kPolyMaxPoints, polyContains,
+                                 // polyNearestEdge, polySimplify
 
 // ---- Polygon / lasso tool ----
 // With a polygon part selected every press edits its outline (like a brush,

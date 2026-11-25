@@ -1,9 +1,34 @@
 // app/mask_widgets.hpp: Masks pane widgets (also the preset / LUT / snapshot rows)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <array>      // std::array
+#include <cmath>      // std::floor
+#include <cstddef>    // size_t
+#include <cstdint>    // uint64_t
+#include <functional> // std::function
+#include <memory>     // std::make_shared
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp"               // View, Text, Size, Align, EdgeInsets, Display,
+                                    // Overflow, TextWrap, FlexDirection, Color,
+                                    // CanvasContext, CanvasImage
+
+#include "app/constants.hpp"        // kColorActivityHover, kColorDropdownRowHover,
+                                    // kColorActivityBarBg, kColorDividerHover,
+                                    // kColorTextDark, kColorTextMuted, kColorTrack,
+                                    // kLutRowH, kLutRowNamesH, kPresetsActivity,
+                                    // kSnapshotsActivity, kLutsActivity
+#include "app/editor_state.hpp"     // inline EditorState state
+#include "app/lut_pane.hpp"         // gLuts, applyLutRow, lutRowDetail
+#include "app/masks.hpp"            // selMask, selectMask
+#include "app/presets.hpp"          // applyPresetEntry
+#include "app/snapshots.hpp"        // applySnapshotEntry
+#include "app/ui_state.hpp"         // uiState (.presets, .snapshots)
+#include "color/lut3d.hpp"          // LutRef
+#include "io/file_utils.hpp"        // filmLower
+#include "mask/mask.hpp"            // Mask, MaskSet, maskNameBlank, maskTypeName
+#include "workers/thumb_worker.hpp" // kFilmThumbW, kFilmThumbH
 
 // ---- Masks pane widgets ----
 

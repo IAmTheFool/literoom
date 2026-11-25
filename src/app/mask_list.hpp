@@ -1,9 +1,16 @@
 // app/mask_list.hpp: mask list operations and parts
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <cstddef> // size_t, std::ptrdiff_t
+#include <string>  // std::string, std::to_string
+#include <utility> // std::swap
+
+#include "app/editor_state.hpp"   // inline EditorState state, MaskUi, setStatus
+#include "app/masks.hpp"          // selMask, selPart, selectedMask, selectMask, maskEditDiscrete
+#include "app/render_update.hpp"  // updateImageFromAdjustments
+#include "app/ui_state.hpp"       // inline UiState uiState, MaskEffects
+#include "app/virtual_copies.hpp" // newMaskShape, objectPrefetch
+#include "mask/mask.hpp"          // Mask, MaskSet, MaskPart, MaskOp, MaskType, limits
 
 // ---- Mask list operations: duplicate, reorder, copy / paste effects ----
 // A copy of the selected mask (shapes and effects) right after it, selected.

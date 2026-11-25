@@ -1,9 +1,20 @@
 // app/curve_editor.hpp: tone curve editor (canvas side)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+
 #pragma once
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+
+#include "liteui.hpp"             // CanvasContext, Color
+#include "app/constants.hpp"      // kCurveSizePx/PadPx/HitPx/PointPx, kColorWhite, kColorDividerHover
+#include "app/editor_state.hpp"   // state (adjust, original, dragging, hist*)
+#include "app/render_update.hpp"  // enterDrag()
+#include "app/ui_state.hpp"       // uiState (curve.*)
+#include "color/curves.hpp"       // CurvePoint(s), CurveChannel, kCurveMaxPoints, kCurveChannelCount,
+                                  // curveInsert/MovePoint/Remove, identityCurve, curveToLut
 
 // ---------------- Tone curve editor (canvas side) ----------------
 // Mapping between canvas-local screen px and curve units (0..255, y up).

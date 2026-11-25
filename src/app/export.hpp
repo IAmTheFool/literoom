@@ -1,9 +1,18 @@
 // app/export.hpp: batch export from the filmstrip
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "app/editor_state.hpp"     // state, setStatus(), FilmStrip
+#include "app/saved_edits.hpp"      // pictureLabel(), flushSidecar()
+#include "app/workers.hpp"          // workers()
+#include "io/file_utils.hpp"        // baseName()
+#include "liteui.hpp"               // openFolderPicker()
+#include "workers/export_worker.hpp" // ExportSettings, ExportOutcome
 
 // ---------------- Batch export from the filmstrip ----------------
 // File > Export Selected... / Export All Shown... write every picked picture to

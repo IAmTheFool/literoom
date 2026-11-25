@@ -1,14 +1,36 @@
-// app/shell/sidebar.hpp: the left sidebar: title, histogram and every pane (buildSidebar)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
+// app/shell/sidebar.hpp: the left sidebar: title, histogram and every pane
 #pragma once
+
+#include <functional> // std::function
+#include <string>     // std::string
+#include <utility>    // std::move
+#include <vector>     // std::vector
+
+#include "liteui.hpp" // View, Text, Size, Overflow, FlexDirection, EdgeInsets,
+                      // FontWeight
+
+#include "app/constants.hpp" // Activity, kNoActivity, kColorPanelBg, kColorTextMuted
+#include "app/editor_state.hpp"         // inline EditorState state
+#include "app/panes/adjust_pane.hpp"    // buildAdjustPane
+#include "app/panes/crop_pane.hpp"      // buildCropPane
+#include "app/panes/curve_pane.hpp"     // buildCurvePane
+#include "app/panes/export_pane.hpp"    // buildExportPane
+#include "app/panes/grade_pane.hpp"     // buildGradePane
+#include "app/panes/history_pane.hpp"   // buildHistoryPane
+#include "app/panes/info_pane.hpp"      // buildInfoPane
+#include "app/panes/luts_pane.hpp"      // buildLutsPane
+#include "app/panes/masks_pane.hpp"     // buildMaskPanes, MaskPaneViews
+#include "app/panes/mix_pane.hpp"       // buildMixPane
+#include "app/panes/presets_pane.hpp"   // buildPresetsPane
+#include "app/panes/rotate_pane.hpp"    // buildRotatePane
+#include "app/panes/snapshots_pane.hpp" // buildSnapshotsPane
+#include "app/shell/histogram_view.hpp" // buildHistogramView
 
 // ---- Sidebar (width driven by activeActivity: 0 when closed) ----
 // Shell: owns width/background/padding and holds the pinned header
 // (title + histogram). It does NOT scroll.
-inline View buildSidebar(const std::vector<Activity> &activities, View &maskEditor) { 
+inline View buildSidebar(const std::vector<Activity> &activities,
+                         View &maskEditor) {
   View sidebarShell;
   sidebarShell.style.height = Size::full();
   sidebarShell.style.flexShrink = 0;
@@ -18,7 +40,8 @@ inline View buildSidebar(const std::vector<Activity> &activities, View &maskEdit
   sidebarShell.style.overflowX = Overflow::Hidden;
   sidebarShell.style.overflowY = Overflow::Visible;
   sidebarShell.style.width = std::function<Size()>([] {
-    return Size::pixel(state.activeActivity != kNoActivity ? state.sidebarWidth : 0.0f);
+    return Size::pixel(state.activeActivity != kNoActivity ? state.sidebarWidth
+                                                           : 0.0f);
   });
 
   // Body: all the panes live here, and this is the part that scrolls.

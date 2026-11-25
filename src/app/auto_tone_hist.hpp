@@ -1,9 +1,30 @@
 // app/auto_tone_hist.hpp: Auto Tone, flushPendingAdjust, histogram and scopes
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm>
+#include <array>
+#include <cmath> // std::lround, std::sqrt, std::floor
+#include <cstdint>
+#include <string> // std::to_string
+
+#include "liteui.hpp"           // CanvasContext, CanvasImage, Color, TextAlign,
+                                // TextBaseline
+#include "core/auto_tone.hpp"   // AutoTone, AutoToneStatus, solveAutoTone
+#include "render/histogram.hpp" // histogram::
+#include "render/scopes.hpp"    // scopes::
+
+#include "app/editor_state.hpp"    // state, setStatus, clipOverlay member
+#include "app/geometry_worker.hpp" // geometryBusy, collectGeometryJob
+#include "app/render_update.hpp" // collectFullRender, updatePreviewFromAdjustments,
+                                 // updateImageFromAdjustments
+#include "app/export.hpp"        // collectExportJob
+#include "app/lut_pane.hpp"      // pollLutPreviews
+#include "app/meta_commands.hpp" // collectDecodeJob
+#include "app/rotate.hpp"        // updateAnglePreview
+#include "app/saved_edits.hpp"   // autosaveSidecar
+#include "app/segmentation.hpp"  // collectSegmentJob
+#include "app/sync.hpp"          // collectSyncJob
+#include "app/ui_state.hpp"      // uiState
 
 // ---------------- Auto Tone ----------------
 // The Adjust pane's Auto Tone button, the A key and Image > Auto Tone. The math
@@ -71,14 +92,12 @@ inline void flushPendingAdjust() {
   if (!state.adjustDirty)
     return;
   state.adjustDirty = false;
-  LITEUI_PROF_START(profRecompute);
   if (state.dragging && state.dragIsAngle && state.orientedPreview)
     updateAnglePreview(); // cheap: turns the small preview, mid-drag
   else if (state.dragging && !state.dragIsAngle && state.previewBase)
     updatePreviewFromAdjustments(); // cheap: small image, mid-drag
   else
     updateImageFromAdjustments(); // full-res: rebuilds state.image
-  LITEUI_PROF_ADD(recompute, profRecompute);
 }
 
 // Brings the shown image (and, if stale, the histogram) up to date. Several

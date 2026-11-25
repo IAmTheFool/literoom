@@ -1,9 +1,22 @@
-// app/shell/mask_panel.hpp: the right-hand mask panel and its divider (addMaskPanel)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
+// app/shell/mask_panel.hpp: the right-hand mask panel and its divider
 #pragma once
+
+#include <algorithm>  // std::clamp
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, Display, Overflow, FlexDirection,
+                      // EdgeInsets, FontWeight, Cursor
+
+#include "app/constants.hpp" // kColorDivider, kColorDividerHover, kDividerW,
+                             // kColorPanelBg, kMinMaskPanelW, kMaxMaskPanelW,
+                             // kMaskPanelPad, kColorTextMuted
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/mask_widgets.hpp" // maskLabel
+#include "app/masks.hpp"        // maskToolActive, selMask, selectedMask
+#include "app/widgets.hpp"      // bindDrag
+#include "mask/mask.hpp"        // Mask
 
 // ---- Right-hand panel: the selected mask's controls ----
 // Only on the Masks pane with a mask selected, so every other pane keeps

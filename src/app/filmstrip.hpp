@@ -1,9 +1,31 @@
-// app/filmstrip.hpp: the filmstrip (fence: filmstrip)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+// app/filmstrip.hpp: the filmstrip: folder listing, filter bar, thumbnails, paint
 #pragma once
+
+#include <algorithm>  // std::min, std::max, std::clamp, std::lower_bound, std::any_of
+#include <array>      // std::array
+#include <cmath>      // std::floor
+#include <cstddef>    // size_t
+#include <filesystem> // std::filesystem::path
+#include <map>        // std::map
+#include <memory>     // std::shared_ptr, std::make_shared
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+#include <vector>     // std::vector
+
+#include "liteui.hpp"            // CanvasContext, CanvasTexture, CanvasImage, Color,
+                                 // TextAlign, TextBaseline, KeyModifiers, openFolderPicker
+
+#include "app/constants.hpp"     // kColorRootBg, kColorTrack, kColorTextFaint,
+                                 // kColorTextDark, kColorTextMuted, kColorAccent,
+                                 // kColorActivityActive
+#include "app/editor_state.hpp"  // inline EditorState state, FilmStrip, FilmEntry, setStatus
+#include "app/sync_busy.hpp"          // syncBusy
+#include "app/workers.hpp"       // workers()
+#include "io/file_utils.hpp"     // baseName, fsPath, u8ToString, listImageFiles
+#include "io/photo_meta.hpp"     // PhotoMeta, PhotoFlag, MetaFilter, kMaxRating, kLabelCount
+#include "io/virtual_copy.hpp"   // listVirtualCopies, vcPath, vcImageOf
+#include "workers/decode_job.hpp" // DecodeWorker
+#include "workers/thumb_worker.hpp" // makeThumb, kFilmThumbW, kFilmThumbH
 
 // BEGIN filmstrip
 // ---------------- Filmstrip: the folder's pictures ----------------

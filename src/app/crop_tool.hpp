@@ -1,9 +1,15 @@
 // app/crop_tool.hpp: crop tool: hit-testing, dragging, apply / remove crop
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm> // std::min, std::max, std::clamp
+#include <cmath>     // std::abs, std::lround
+
+#include "app/constants.hpp"        // kCropHitPx, kCropMinPx
+#include "app/crop.hpp"             // cropAspect, cropToolActive
+#include "app/editor_state.hpp"     // inline EditorState state, kEdge*, CropUi
+#include "app/geometry_worker.hpp"  // geometryBusy
+#include "app/render_update.hpp"    // updateImageFromAdjustments
+#include "core/geometry.hpp"        // CropRect
 
 // Which part of the selection is under (px, py) (image coordinates)?
 // Returns kEdge* bits for a handle, kEdgeMove for the interior, 0 for none.

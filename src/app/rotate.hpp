@@ -1,9 +1,14 @@
 // app/rotate.hpp: rotate / flip and straighten
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include "app/editor_state.hpp"    // inline EditorState state
+#include "app/geometry_worker.hpp" // geometryBusy
+#include "app/render_update.hpp"   // updateImageFromAdjustments
+#include "app/ui_state.hpp"        // uiState (dropCurveSelections)
+#include "core/geometry.hpp"       // GeoOp, geoStep, Orient, CropRect, Dims,
+                                   // rotatedDims, snapAngle
+#include "core/raster_ops.hpp"     // rotateArbitrary
+#include "render/render.hpp"       // renderAdjusted
 
 // ---------------- Rotate / flip ----------------
 
@@ -101,4 +106,3 @@ inline void redo() {
   uiState.dropCurveSelections();
   updateImageFromAdjustments();
 }
-

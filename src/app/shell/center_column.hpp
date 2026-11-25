@@ -1,9 +1,37 @@
-// app/shell/center_column.hpp: canvas, "no image" placeholder and filmstrip (buildCenterColumn)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
+// app/shell/center_column.hpp: canvas, "no image" placeholder and filmstrip
 #pragma once
+
+#include <cmath>      // std::pow, std::abs
+#include <cstdint>    // uint32_t
+#include <functional> // std::function
+#include <memory>     // std::make_shared
+#include <optional>   // std::optional
+#include <string>     // std::string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, Display, Cursor, CanvasContext,
+                      // PointerEvent, WheelEvent, MouseButton, Justify, Align,
+                      // FlexDirection
+
+#include "app/auto_tone_hist.hpp" // flushPendingAdjust
+#include "app/canvas_paint.hpp"   // paintCanvas
+#include "app/canvas_view.hpp" // viewGeo, viewLocal, viewBarPress, viewPanBegin,
+                               // viewDragTo, ViewDrag, zoomAbout
+#include "app/compare.hpp"     // splitFromX
+#include "app/constants.hpp"   // kZoomStep, kColorViewportBg, kColorTextFaint
+#include "app/crop.hpp"        // cropToolActive
+#include "app/crop_tool.hpp"   // cropPress, cropDrag
+#include "app/editor_state.hpp" // inline EditorState state, CompareMode, CropUi, MaskUi
+#include "app/filmstrip.hpp" // kFilmH, kFilmCellW, filmstripShown, paintFilmstrip,
+                             // collectThumbJobs, filmClick, filmScrollBy
+#include "app/mask_brush.hpp"     // maskPress, maskDrag
+#include "app/mask_list.hpp"      // maskEndDrag
+#include "app/mask_polygon.hpp"   // polygonRightPress
+#include "app/masks.hpp"          // maskToolActive
+#include "app/readout.hpp"        // hoverClear, hoverSample
+#include "app/virtual_copies.hpp" // objectPress
+#include "app/wb_picker.hpp"      // wbPickerActive, wbPress
+#include "app/widgets.hpp"        // closeMenus
 
 // ---- Center column: canvas viewport on top, filmstrip underneath ----
 // Keeps the filmstrip under the picture only, so the sidebar keeps its

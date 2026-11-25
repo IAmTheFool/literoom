@@ -1,10 +1,35 @@
 // app/editor_state.hpp: crop / filmstrip / compare state and EditorState (the
 // global `state`)
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+
 #pragma once
+
+#include <algorithm>   // std::clamp
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "liteui.hpp"               // CanvasImage, CanvasTexture
+
+#include "core/geometry.hpp"        // Orient, CropRect
+#include "core/image16.hpp"         // Image16
+#include "edit/adjustment_set.hpp"  // AdjustmentSet
+#include "io/color_tag.hpp"         // color_tag::ColorTag
+#include "io/exif.hpp"              // exif::PhotoInfo
+#include "io/photo_meta.hpp"        // PhotoMeta, MetaFilter
+#include "io/sidecar.hpp"           // SnapshotList
+#include "mask/mask.hpp"            // MaskPart
+#include "mask/mask_brush.hpp"      // BrushShape, kBrushDefaultSize
+#include "mask/mask_object.hpp"     // ObjectPrompt
+#include "mask/mask_polygon.hpp"    // PolyPt
+#include "mask/mask_range.hpp"      // LuminosityShape
+#include "render/scopes.hpp"        // scopes::Kind
+
+#include "app/constants.hpp"        // kInfoActivity, kPlaceholderW/H, kZoomMin/Max
+#include "app/workers.hpp"          // workers(), see below
 
 // ---------------- Crop tool state ----------------
 

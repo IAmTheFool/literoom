@@ -1,9 +1,47 @@
-// app/virtual_copies.hpp: virtual copies
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
+// app/virtual_copies.hpp: virtual copies, object masks, adding / deleting masks
 #pragma once
+
+#include <algorithm>    // std::min, std::max
+#include <cmath>        // std::hypot
+#include <cstddef>      // size_t, std::ptrdiff_t
+#include <cstdint>      // uint8_t
+#include <filesystem>   // std::filesystem::remove
+#include <memory>       // std::shared_ptr, std::make_shared
+#include <optional>     // std::optional, std::nullopt
+#include <string>       // std::string, std::to_string
+#include <system_error> // std::error_code
+#include <utility>      // std::move
+#include <variant>      // std::get_if
+#include <vector>       // std::vector
+
+#include "app/constants.hpp"    // kMaskHitPx
+#include "app/editor_state.hpp" // inline EditorState state, FilmEntry, FilmStrip,
+                                // MaskUi, setStatus
+#include "app/filmstrip.hpp"    // filmRebuildView, filmOpenIndex
+#include "app/masks.hpp" // selMask, selPart, selectMask, maskEditDiscrete,
+                         // maskToolActive, selectedPartType
+#include "app/render_update.hpp" // updateImageFromAdjustments
+#include "app/saved_edits.hpp"   // flushSidecar, sidecarPath
+#include "app/sync_busy.hpp"          // syncBusy
+#include "app/workers.hpp"       // workers()
+#include "core/geometry.hpp"     // GeoFrame
+#include "io/file_utils.hpp"     // baseName, filmLower
+#include "io/photo_meta.hpp"     // PhotoMeta
+#include "io/sidecar.hpp"        // sidecarFileText, sidecarScan
+#include "io/virtual_copy.hpp"   // vcImageOf, vcPath, vcFreeId, vcCopyOf,
+                                 // kMaxVirtualCopies
+#include "mask/mask.hpp" // Mask, MaskSet, MaskPart, MaskOp, MaskType, MaskShape,
+                         // kMaxMasks
+#include "mask/mask_brush.hpp"      // BrushShape
+#include "mask/mask_geom.hpp"       // RadialShape, LinearShape
+#include "mask/mask_object.hpp"     // ObjectShape, ObjectMap, ObjectPrompt,
+                                    // kObjectMapEdge, nextObjectMapId
+#include "mask/mask_polygon.hpp"    // PolygonShape
+#include "mask/mask_range.hpp"      // ColorRangeShape, LuminosityShape
+#include "mask/mask_rect.hpp"       // RectShape
+#include "workers/segment_job.hpp"  // SegmentRequest
+#include "workers/sync_job.hpp"     // writeTextAtomic
+#include "workers/thumb_worker.hpp" // makeThumb
 
 // ---------------- Virtual copies ----------------
 // A virtual copy is another set of edits for the same picture file: its own
@@ -306,7 +344,6 @@ inline std::optional<MaskShape> newMaskShape(MaskType t) {
   }
 }
 
-inline void objectPrefetch();
 
 inline void addMask(MaskType t) {
   if (!state.original)

@@ -1,10 +1,19 @@
-// app/shell/histogram_view.hpp: the pinned histogram / scopes view (buildHistogramView)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
+// app/shell/histogram_view.hpp: the pinned histogram / scopes view
 #pragma once
 
+#include <cstdint>    // uint32_t
+#include <functional> // std::function
+
+#include "liteui.hpp" // View, Size, EdgeInsets, Cursor, CanvasContext,
+                      // PointerEvent, MouseButton
+
+#include "app/auto_tone_hist.hpp" // paintHistogram, cycleScope, setClipping,
+                                  // refreshHistogramIfStale
+#include "app/constants.hpp"    // kHistHeightPx, kScopeHeightPx, kHistTriHitPx,
+                                // kNeverSeenActivity
+#include "app/editor_state.hpp" // inline EditorState state, scopes::Kind (?)
+#include "app/ui_state.hpp"     // uiState
+#include "app/widgets.hpp"      // closeMenus
 // Histogram of the picture as currently shown (see computeHistogram).
 // Pinned above every pane, like Lightroom. A click cycles it through the
 // histogram, a waveform and a vectorscope (cycleScope).

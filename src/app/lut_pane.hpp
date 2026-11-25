@@ -1,10 +1,33 @@
 // app/lut_pane.hpp: 3D LUT list, previews and cache
-//
-// UI-shell code split out of main.cpp. A plain move, apart from loadSidecar
-// (at the bottom), which now protects a saved-edits file it could not use.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "liteui.hpp" // CanvasImage
+
+#include "color/lut3d.hpp"      // LutRef
+#include "core/adjustments.hpp" // AdjId
+#include "io/lut_library.hpp" // LutEntry, LutStatus, LutResolved, clearLutCache,
+// lutDir, listLutEntries, acquireLut, importLutFile
+#include "io/minijson.hpp"     // mj::Json
+#include "io/photo_meta.hpp"   // PhotoMeta
+#include "io/sidecar.hpp"      // SidecarHead, SidecarCheck, sidecarCheckText,
+                               // sidecarMetaFromRoot, sidecarSnapshotsFromJson,
+                               // sidecarNeutralEditsDump
+#include "io/sidecar_file.hpp" // SidecarRead, readSidecarFile
+#include "workers/lut_preview_worker.hpp" // LutPreviewJob, LutPreviewResult
+
+#include "app/constants.hpp"    // kLutRows, kLutsActivity
+#include "app/editor_state.hpp" // state, setStatus
+#include "app/saved_edits.hpp"  // sidecarPath
+#include "app/workers.hpp"      // workers().lutPreview
 
 // ---------------- 3D LUTs ----------------
 // The LUTs pane (see "LUTs" in main): the library's .cube files as a list, each
@@ -370,7 +393,7 @@ inline void loadSidecar() {
   std::string text, why;
   switch (readSidecarFile(state.imagePath, &text, &why)) {
   case SidecarRead::Absent:
-    return; // no saved edits: the normal case
+    return;                // no saved edits: the normal case
   case SidecarRead::Empty: // an empty file holds nothing to lose
     setStatus("Ignored saved edits: the file is empty", true);
     return;

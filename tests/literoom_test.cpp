@@ -34,7 +34,6 @@ inline Catch::Approx within(double v, double tol) { return Catch::Approx(v).marg
 #include "cases/geometry.inc"
 #include "cases/histogram.inc"
 #include "cases/image16.inc"
-#include "cases/image_codec.inc"
 #include "cases/image_codec16.inc"
 #include "cases/image_meta.inc"
 #include "cases/image_source.inc"

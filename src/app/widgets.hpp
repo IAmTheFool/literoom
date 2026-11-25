@@ -1,9 +1,31 @@
 // app/widgets.hpp: small reusable widgets, pointer helpers, text-field keys
-//
-// UI-shell code split out of main.cpp. A plain move: nothing was changed.
-// Included only by main.cpp, at the spot where this code used to be, so it
-// is not self-contained: it uses what main.cpp defines before it.
 #pragma once
+
+#include <algorithm>  // std::clamp, std::min
+#include <cmath>      // std::abs, std::lround
+#include <cstdint>    // uint32_t
+#include <functional> // std::function
+#include <memory>     // std::shared_ptr, std::make_shared
+#include <optional>   // std::optional
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+#include <variant>    // std::get_if
+#include <vector>     // std::vector
+
+#include "liteui.hpp" // View, Text, Size, EdgeInsets, Justify, Align, Position,
+    // FlexDirection, Display, Dynamic, PointerEvent, KeyEvent,
+    // MouseButton, Cursor, TextInputState, Color
+
+#include "app/constants.hpp" // kColorMenuHover, kColorTransparent, kColorTextMid,
+    // kColorTextDark, kColorTextMuted, kColorTextFaint,
+    // kColorDropdownBg, kColorDropdownBorder,
+    // kColorDropdownRowHover, kColorActivityBarBg,
+    // kColorActivityHover, kColorAccent, kColorAccentHover,
+    // kColorDividerHover, kColorWhite, kTitlebarH,
+    // kTrackFill, kTrackEdge, kThumbFill, kThumbEdge
+#include "app/editor_state.hpp"  // inline EditorState state
+#include "app/render_update.hpp" // enterDrag
+#include "core/adjustments.hpp"  // AdjustmentSpec, AdjId
 
 // ---------------- Small reusable pieces ----------------
 

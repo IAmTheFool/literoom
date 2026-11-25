@@ -1,9 +1,22 @@
 // app/panes/luts_pane.hpp: the LUTs pane (buildLutsPane)
-//
-// UI-shell code split out of main(). The function body is the code that used
-// to sit inline in main(), unchanged. Included only by main.cpp, after the
-// other app/ files and before main(); not self-contained.
 #pragma once
+
+#include <cmath>      // std::lround
+#include <cstddef>    // size_t
+#include <functional> // std::function
+#include <string>     // std::string, std::to_string
+#include <utility>    // std::move
+
+#include "liteui.hpp" // View, Text, Size, FlexDirection, Display, EdgeInsets
+
+#include "app/constants.hpp" // kLutsActivity, kLutRows, kColorTextMuted, kColorTextDark
+#include "app/editor_state.hpp" // inline EditorState state
+#include "app/lut_pane.hpp" // gLuts, refreshLuts, importLuts, lutCurrentText,
+                            // setLutAmount, removeLut
+#include "app/mask_widgets.hpp" // buildLutRow
+#include "app/widgets.hpp"      // SliderSpec, buildSliderRow, sidebarButton
+#include "core/adjustments.hpp" // AdjId
+#include "io/lut_library.hpp"   // lutDir
 
 // -- "LUTs" pane: 3D color lookup tables (.cube files made for ordinary sRGB
 // / Rec.709 pictures). Click one to apply it (one undo step); LUT Amount sets

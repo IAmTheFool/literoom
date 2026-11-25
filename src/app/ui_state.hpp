@@ -1,9 +1,18 @@
 // app/ui_state.hpp: UI-only state: tabs, selections, clipboards (`uiState`)
-//
-// UI-shell code split out of main.cpp (this file is new in step 3: the globals
-// that used to sit in the pane files are gathered here).
-// Included only by main.cpp, right after editor_state.hpp.
 #pragma once
+
+#include <memory>   // std::shared_ptr
+#include <optional> // std::optional
+#include <string>   // std::string
+#include <vector>   // std::vector
+
+#include "liteui.hpp" // TextInputState
+
+#include "color/color_grade.hpp" // ColorGrade
+#include "color/color_mix.hpp"   // MixChan, MixValues
+#include "color/curves.hpp"      // CurveChannel, CurveSet, identityCurves
+#include "core/adjustments.hpp"  // AdjValues
+#include "io/preset.hpp"         // Preset
 
 // ---------------- UI-only state ----------------
 // What the panes remember that is neither an edit nor part of the picture:
@@ -55,11 +64,11 @@ struct UiState {
 
   // Masks pane, Effect tab (Mix / Grade / Curve)
   struct MaskPane {
-    MixChan mixChan = MixChan::Hue; // Mix: Hue / Sat / Lum
-    int gradeRange = 1;             // Grade: 0..3 (Midtones)
+    MixChan mixChan = MixChan::Hue;              // Mix: Hue / Sat / Lum
+    int gradeRange = 1;                          // Grade: 0..3 (Midtones)
     CurveChannel curveCh = CurveChannel::Master; // Curve: channel
-    int curveActive = -1;           // point being dragged
-    bool curveUiDirty = false;      // repaint-only change
+    int curveActive = -1;                        // point being dragged
+    bool curveUiDirty = false;                   // repaint-only change
     float curveGrabDx = 0.0f, curveGrabDy = 0.0f;
   } maskPane;
 
